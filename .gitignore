@@ -1,0 +1,5 @@
+/bin/
+/dist/
+/.vybava/
+.DS_Store
+coverage.out

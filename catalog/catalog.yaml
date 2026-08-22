@@ -1,0 +1,54 @@
+schema_version: 1
+
+items:
+  - id: memorylint
+    kind: applet
+    status: stable
+    description: Validate Obsidian-compatible AI memory files, indexes, links, limits, and fixture data.
+    applet: memorylint
+
+  - id: prm
+    kind: skill
+    status: experimental
+    description: Monitor an existing pull request and resolve review feedback until it is ready to merge.
+    source: skills/prm
+
+  - id: prc
+    kind: skill
+    status: experimental
+    description: Create or find the current branch pull request, then hand it to the PR monitor workflow.
+    source: skills/prc
+
+  - id: merge
+    kind: skill
+    status: experimental
+    description: Merge a pull request only after its safety, review, and CI gates pass.
+    source: skills/merge
+
+groups:
+  - id: recommended
+    description: Stable baseline suitable for every workstation and project.
+    items:
+      - memorylint
+
+  - id: experimental
+    description: Early packages that are useful but still evolving.
+    items:
+      - prm
+      - prc
+      - merge
+
+  - id: ai-git
+    description: Reusable pull-request creation, review, and merge workflows.
+    items:
+      - prm
+      - prc
+      - merge
+
+  - id: everything
+    description: Every package currently published by Výbava.
+    items:
+      - memorylint
+      - prm
+      - prc
+      - merge
