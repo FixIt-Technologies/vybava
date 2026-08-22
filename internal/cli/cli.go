@@ -13,6 +13,7 @@ import (
 	assets "github.com/FixIt-Technologies/vybava"
 	"github.com/FixIt-Technologies/vybava/internal/catalog"
 	"github.com/FixIt-Technologies/vybava/internal/doctor"
+	"github.com/FixIt-Technologies/vybava/internal/fontfreeze"
 	"github.com/FixIt-Technologies/vybava/internal/installer"
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
 	"github.com/FixIt-Technologies/vybava/internal/state"
@@ -58,6 +59,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "memorylint" {
 		return rt.memorylintApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "fontfreeze" {
+		return rt.fontfreezeApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -76,6 +80,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.updateCommand(),
 		rt.doctorCommand(),
 		rt.memoryCommand(),
+		rt.fontfreezeCommand("fontfreeze [fonts.yaml]"),
 		rt.browseCommand(),
 	)
 	return root, nil
@@ -248,6 +253,64 @@ func (rt *runtime) doctorCommand() *cobra.Command {
 func (rt *runtime) memoryCommand() *cobra.Command {
 	command := &cobra.Command{Use: "memory", Short: "Work with AI memory files"}
 	command.AddCommand(rt.memoryLintCommand("lint [memory-home...]"))
+	return command
+}
+
+func (rt *runtime) fontfreezeApplet() *cobra.Command {
+	command := rt.fontfreezeCommand("fontfreeze [fonts.yaml]")
+	command.SilenceUsage = true
+	command.SilenceErrors = true
+	command.SetOut(rt.stdout)
+	command.SetErr(rt.stderr)
+	command.PersistentFlags().BoolVar(&rt.json, "json", false, "emit stable JSON output")
+	return command
+}
+
+func (rt *runtime) fontfreezeCommand(use string) *cobra.Command {
+	var dryRun bool
+	command := &cobra.Command{
+		Use:   use,
+		Short: "Freeze variable webfonts at the styles a site renders and subset them per language",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			manifestPath := "fonts.yaml"
+			if len(args) == 1 {
+				manifestPath = args[0]
+			}
+			manifest, err := fontfreeze.LoadManifest(manifestPath)
+			if err != nil {
+				return err
+			}
+			jobs, err := fontfreeze.Plan(manifest, filepath.Dir(manifestPath))
+			if err != nil {
+				return err
+			}
+			if dryRun {
+				if rt.json {
+					return writeJSON(rt.stdout, jobs)
+				}
+				for _, job := range jobs {
+					fmt.Fprintf(rt.stdout, "%s <- %s %v\n", job.Output, job.Master, job.InstancerArgs)
+				}
+				return nil
+			}
+			if err := fontfreeze.CheckTooling(); err != nil {
+				return err
+			}
+			fmt.Fprintln(rt.stderr, fontfreeze.LicenseReminder)
+			report, err := fontfreeze.Run(jobs, fontfreeze.ExecRunner)
+			if err != nil {
+				return err
+			}
+			report.Manifest = manifestPath
+			if rt.json {
+				return writeJSON(rt.stdout, report)
+			}
+			_, err = fmt.Fprint(rt.stdout, fontfreeze.FormatText(report))
+			return err
+		},
+	}
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "print planned fonttools work without executing")
 	return command
 }
 
