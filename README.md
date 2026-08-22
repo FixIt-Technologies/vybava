@@ -29,6 +29,24 @@ go build -o ./bin/vybava ./cmd/vybava
 ./bin/vybava doctor
 ```
 
+## Install with Homebrew
+
+Výbava and its Homebrew tap are private. Authenticate Git and provide Homebrew
+with a GitHub token that can read private release assets:
+
+```sh
+gh auth setup-git
+export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
+brew install --cask FixIt-Technologies/tap/vybava
+```
+
+Tagged releases publish the cross-platform archives and update
+`FixIt-Technologies/homebrew-tap` automatically. Subsequent upgrades use:
+
+```sh
+brew upgrade --cask vybava
+```
+
 `install` defaults to the `recommended` group when no selector is supplied.
 Selectors can be mixed:
 
