@@ -26,9 +26,13 @@ jobs:
         run: go test -race -coverprofile=coverage.out ./...
       - name: Build
         run: go build -trimpath ./cmd/vybava
-      - name: Validate release configuration
+      - name: Package release snapshot
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: check
+          args: release --snapshot --clean --skip=publish
+        env:
+          TAP_DEPLOY_KEY: test-only-placeholder
+      - name: Validate generated Homebrew cask syntax
+        run: ruby -c dist/homebrew/Casks/vybava.rb

@@ -47,3 +47,75 @@ changelog:
     exclude:
       - '^docs:'
       - '^test:'
+
+homebrew_casks:
+  - name: vybava
+    ids:
+      - vybava
+    binaries:
+      - vybava
+    homepage: https://github.com/FixIt-Technologies/vybava
+    description: Portable engineering tools, agent skills, and diagnostics for every project
+    license: MIT
+    directory: Casks
+    commit_msg_template: "chore(cask): update vybava to {{ .Tag }}"
+    repository:
+      owner: FixIt-Technologies
+      name: homebrew-tap
+      branch: main
+      git:
+        url: git@github.com:FixIt-Technologies/homebrew-tap.git
+        private_key: "{{ .Env.TAP_DEPLOY_KEY }}"
+    commit_author:
+      name: vybava-release
+      email: engineering@fixit.technology
+    url:
+      template: https://github.com/FixIt-Technologies/vybava/releases/download/{{ .Tag }}/{{ .ArtifactName }}
+      using: GitHubPrivateRepositoryReleaseDownloadStrategy
+      verified: github.com/FixIt-Technologies/vybava/
+    custom_block: |
+      require "download_strategy"
+
+      class GitHubPrivateRepositoryReleaseDownloadStrategy < CurlDownloadStrategy
+        def initialize(url, name, version, **meta)
+          @url = url
+          parse_url_pattern
+          set_github_token
+          meta[:headers] ||= []
+          meta[:headers] << "Accept: application/octet-stream"
+          meta[:headers] << "Authorization: Bearer #{@github_token}"
+          super("https://api.github.com/repos/#{@owner}/#{@repo}/releases/assets/#{asset_id}", name, version, **meta)
+        end
+
+        def download_url
+          "https://#{@github_token}@api.github.com/repos/#{@owner}/#{@repo}/releases/assets/#{asset_id}"
+        end
+
+        private
+
+        def parse_url_pattern
+          pattern = %r{https://github.com/([^/]+)/([^/]+)/releases/download/([^/]+)/(\S+)}
+          raise CurlDownloadStrategyError, "Invalid private GitHub release URL" unless @url =~ pattern
+
+          _, @owner, @repo, @tag, @filename = *@url.match(pattern)
+        end
+
+        def set_github_token
+          @github_token = ENV["HOMEBREW_GITHUB_API_TOKEN"]
+          raise CurlDownloadStrategyError, "HOMEBREW_GITHUB_API_TOKEN is required" unless @github_token
+
+          GitHub.repository(@owner, @repo)
+        end
+
+        def asset_id
+          @asset_id ||= GitHub.get_release(@owner, @repo, @tag)["assets"]
+                              .find { |asset| asset["name"] == @filename }
+                              .fetch("id") { raise CurlDownloadStrategyError, "Release asset not found" }
+        end
+      end
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/vybava"]
+          end

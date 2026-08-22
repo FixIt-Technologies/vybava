@@ -16,6 +16,8 @@ utilities, reusable agent skills, and workstation diagnostics.
   executable and dispatch by `argv[0]`.
 - Utility implementations stay in focused `internal/<utility>/` packages.
   CLI wiring must not contain domain logic.
+- Tagged releases publish a private Homebrew cask through the repository-scoped
+  tap deploy key. Read `docs/homebrew.md` before changing release distribution.
 - Adding a package should normally require its payload/implementation and one
   catalog entry. Adding it to a preset is one additional catalog line.
 
