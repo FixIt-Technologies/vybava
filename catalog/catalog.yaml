@@ -7,6 +7,12 @@ items:
     description: Validate Obsidian-compatible AI memory files, indexes, links, limits, and fixture data.
     applet: memorylint
 
+  - id: fontfreeze
+    kind: applet
+    status: experimental
+    description: Freeze variable webfonts at the axis positions a site renders and subset them per language, via fonttools.
+    applet: fontfreeze
+
   - id: prm
     kind: skill
     status: experimental
@@ -37,6 +43,7 @@ groups:
       - prm
       - prc
       - merge
+      - fontfreeze
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -49,6 +56,7 @@ groups:
     description: Every package currently published by Výbava.
     items:
       - memorylint
+      - fontfreeze
       - prm
       - prc
       - merge
