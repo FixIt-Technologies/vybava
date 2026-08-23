@@ -190,7 +190,7 @@ func NewNote(home, noteType, name, description string) (string, error) {
 	}
 	config, err := loadConfig(home)
 	if err != nil {
-		config = DefaultConfig()
+		return "", err
 	}
 	if !contains(config.AllowedTypes, noteType) {
 		return "", fmt.Errorf("type %q is not allowed", noteType)
@@ -230,9 +230,13 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A malformed or unreadable .memorylint.yaml is an error, not a licence to
+	// rewrite the index under the default policy: Lint fails on the same input,
+	// so the two would otherwise disagree about which notes are valid. An absent
+	// config already yields the defaults without an error.
 	config, err := loadConfig(home)
 	if err != nil {
-		config = DefaultConfig()
+		return nil, err
 	}
 	known := config.AllowedTypes
 	grouped := map[string][]properties{}

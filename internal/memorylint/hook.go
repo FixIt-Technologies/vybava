@@ -60,10 +60,15 @@ func memoryPath(path, cwd string) (string, bool) {
 	return path, true
 }
 
-// canonicalHome matches the two homes the memory doctrine defines: the committed
-// team home `<repo>/.claude/memory` and the agent-managed personal home
-// `~/.claude/projects/<slug>/memory`, including anything nested under either.
-var canonicalHome = regexp.MustCompile(`/\.claude/(?:projects/[^/]+/)?memory(?:/|$)`)
+// canonicalHome matches the homes the memory doctrine defines: the committed
+// team home `<repo>/.claude/memory`, the agent-managed personal home
+// `~/.claude/projects/<slug>/memory`, and the Codex equivalents that Discover
+// already recognises — including anything nested under any of them.
+//
+// Both agents matter here: this binary is the hook for Claude Code AND Codex, so
+// leaving `.codex` out would mean an unindexed Codex home's first note is never
+// scanned and a secret write goes through.
+var canonicalHome = regexp.MustCompile(`/\.[cC]odex/(?:projects/[^/]+/)?memory(?:/|$)|/\.claude/(?:projects/[^/]+/)?memory(?:/|$)`)
 
 // insideMemoryHome decides whether a path under some directory called `memory`
 // is really a note.

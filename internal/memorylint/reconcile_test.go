@@ -484,3 +484,51 @@ func TestNewNoteRefusesANameTheLinterWouldReject(t *testing.T) {
 		t.Errorf("a conventional name must be accepted: %v", err)
 	}
 }
+
+func TestHookGuardsUnindexedCodexHomesToo(t *testing.T) {
+	// This binary is the hook for BOTH agents, and Discover already treats
+	// .codex/memory as a home — so leaving it out meant a Codex home's first
+	// note was never scanned.
+	for _, home := range []string{
+		"/u/.codex/memory/project-a.md",
+		"/u/.Codex/memory/project-a.md",
+		"/u/.codex/projects/-u-repo/memory/project-a.md",
+		"/u/.claude/memory/inbox/project-a.md",
+	} {
+		p := HookPayload{ToolName: "Write"}
+		p.ToolInput.FilePath = home
+		if got := HookTargets(p); len(got) != 1 {
+			t.Errorf("%s must be guarded, got %v", home, got)
+		}
+	}
+	// ...while a lookalike that is not a home still is not one.
+	for _, other := range []string{"/u/.claude/memory-notes/project-a.md", "/u/docs/memory/project-a.md"} {
+		p := HookPayload{ToolName: "Write"}
+		p.ToolInput.FilePath = other
+		if got := HookTargets(p); len(got) != 0 {
+			t.Errorf("%s must not be treated as a home, got %v", other, got)
+		}
+	}
+}
+
+func TestConfigErrorsPropagateInsteadOfSilentlyUsingDefaults(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".memorylint.yaml"), []byte("version: 99\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "project-a.md"),
+		[]byte("---\nname: project-a\ndescription: Use when a.\ntype: project\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Lint rejects this config, so reindex must not rewrite the index under a
+	// different policy, and new must not create notes under one either.
+	if _, err := Reindex(home, "", true); err == nil {
+		t.Error("reindex must refuse an unsupported config version")
+	}
+	if _, err := NewNote(home, "project", "project-b", "Use when b."); err == nil {
+		t.Error("new must refuse an unsupported config version")
+	}
+	if _, err := os.Stat(filepath.Join(home, "MEMORY.md")); err == nil {
+		t.Error("no index should have been written")
+	}
+}
