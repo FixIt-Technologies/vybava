@@ -1,0 +1,181 @@
+package memorylint
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
+
+// HookDecision is what a hook invocation concluded, independent of how the
+// caller chooses to signal it. Exit-code mapping lives in the CLI.
+type HookDecision struct {
+	Block   bool
+	Message string
+}
+
+// HookPayload is the subset of a Claude Code / Codex hook event this tool reads.
+type HookPayload struct {
+	HookEventName string `json:"hook_event_name"`
+	ToolName      string `json:"tool_name"`
+	Cwd           string `json:"cwd"`
+	ToolInput     struct {
+		FilePath  string `json:"file_path"`
+		Path      string `json:"path"`
+		Content   string `json:"content"`
+		NewString string `json:"new_string"`
+		Command   string `json:"command"`
+	} `json:"tool_input"`
+}
+
+var patchPathPattern = regexp.MustCompile(`(?m)^\*\*\* (?:Add|Update|Delete) File: (.+\.md)\s*$`)
+
+// managedHomePattern matches the agent-managed memory home. Claude Code owns
+// this directory and rewrites frontmatter it writes there — see RefuseManaged.
+var managedHomePattern = regexp.MustCompile(`/\.claude/projects/[^/]+/memory(/|$)`)
+
+// rewritingTools are the tools whose writes Claude Code post-processes. Bash and
+// Codex's apply_patch write the bytes given to them.
+var rewritingTools = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
+
+func memoryPath(path, cwd string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" || !strings.HasSuffix(strings.ToLower(path), ".md") {
+		return "", false
+	}
+	if !filepath.IsAbs(path) && cwd != "" {
+		path = filepath.Join(cwd, path)
+	}
+	path = filepath.Clean(path)
+	slash := filepath.ToSlash(path)
+	return path, strings.Contains(slash, "/memory/") || strings.HasSuffix(slash, "/memory")
+}
+
+// HookTargets returns the memory notes a hook payload is about to write.
+func HookTargets(p HookPayload) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, candidate := range []string{p.ToolInput.FilePath, p.ToolInput.Path} {
+		if path, ok := memoryPath(candidate, p.Cwd); ok && !seen[path] {
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	for _, m := range patchPathPattern.FindAllStringSubmatch(p.ToolInput.Command, -1) {
+		if path, ok := memoryPath(m[1], p.Cwd); ok && !seen[path] {
+			seen[path] = true
+			out = append(out, path)
+		}
+	}
+	return out
+}
+
+// addedPatchText keeps only the lines a Codex patch ADDS, so a secret being
+// deleted is never reported as a secret being introduced.
+func addedPatchText(command string) string {
+	var added []string
+	for _, line := range strings.Split(command, "\n") {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			added = append(added, strings.TrimPrefix(line, "+"))
+		}
+	}
+	return strings.Join(added, "\n")
+}
+
+// RefuseManaged reports whether a tool write must be refused outright because
+// the harness would rewrite the file afterwards.
+//
+// Claude Code owns ~/.claude/projects/<slug>/memory/ and normalizes frontmatter
+// on every Edit/Write it performs there, converting the flat v2 properties this
+// linter requires back into a nested `metadata:` envelope and stamping
+// originSessionId/modified. That rewrite lands AFTER the post-write hook, so no
+// hook can detect it and no `check` run in the same session will see it. The
+// only reliable defence is to refuse the tool and send the caller to a writer
+// the harness leaves alone.
+//
+// Verified 2026-08-22: an identical note edited outside that directory is
+// untouched, and the same edit made with Bash preserves the frontmatter exactly.
+func RefuseManaged(p HookPayload, targets []string) (HookDecision, bool) {
+	if !rewritingTools[p.ToolName] {
+		return HookDecision{}, false
+	}
+	for _, path := range targets {
+		if !managedHomePattern.MatchString(filepath.ToSlash(path)) {
+			continue
+		}
+		return HookDecision{Block: true, Message: fmt.Sprintf(
+			"%s rewrites frontmatter in the agent-managed memory home, which silently "+
+				"reverts the flat v2 properties to a nested metadata: envelope.\n"+
+				"  refused: %s\n"+
+				"  write it with Bash instead (heredoc, sed, perl), or scaffold with `memorylint new`,\n"+
+				"  then re-run `memorylint check` on the home.", p.ToolName, path)}, true
+	}
+	return HookDecision{}, false
+}
+
+// RunHook reads one hook payload and decides whether the write may proceed.
+func RunHook(stdin io.Reader) HookDecision {
+	raw, err := io.ReadAll(stdin)
+	if err != nil {
+		return HookDecision{}
+	}
+	var p HookPayload
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return HookDecision{}
+	}
+	targets := HookTargets(p)
+	if len(targets) == 0 {
+		return HookDecision{}
+	}
+
+	if decision, refused := RefuseManaged(p, targets); refused {
+		return decision
+	}
+
+	// Pre-write: judge the proposed content, which is not on disk yet.
+	if p.HookEventName == "PreToolUse" || p.HookEventName == "" {
+		content := p.ToolInput.Content + "\n" + p.ToolInput.NewString + "\n" + addedPatchText(p.ToolInput.Command)
+		config, err := loadConfig(filepath.Dir(targets[0]))
+		if err != nil {
+			config = DefaultConfig()
+		}
+		if findings := fixtureFindings(targets[0], []byte(content), config); len(findings) > 0 {
+			return HookDecision{Block: true, Message: "blocked write: " + formatFinding(findings[0])}
+		}
+		return HookDecision{}
+	}
+
+	// Post-write: the notes exist, so lint them for real.
+	var messages []string
+	for _, path := range targets {
+		if filepath.Base(path) == "MEMORY.md" {
+			continue
+		}
+		report, err := Lint([]string{filepath.Dir(path)})
+		if err != nil {
+			continue
+		}
+		for _, f := range report.Findings {
+			if f.Severity == SeverityError && sameFile(f.Path, path) {
+				messages = append(messages, formatFinding(f))
+			}
+		}
+	}
+	if len(messages) > 0 {
+		return HookDecision{Block: true, Message: strings.Join(messages, "\n")}
+	}
+	return HookDecision{}
+}
+
+func sameFile(a, b string) bool {
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func formatFinding(f Finding) string {
+	if f.Line > 0 {
+		return fmt.Sprintf("%s %s:%d [%s] %s", strings.ToUpper(string(f.Severity)), f.Path, f.Line, f.Rule, f.Message)
+	}
+	return fmt.Sprintf("%s %s [%s] %s", strings.ToUpper(string(f.Severity)), f.Path, f.Rule, f.Message)
+}

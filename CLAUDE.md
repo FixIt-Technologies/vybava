@@ -29,6 +29,7 @@ go vet ./...
 go run ./cmd/vybava catalog list
 go run ./cmd/vybava doctor
 go run ./cmd/vybava memory lint <path>
+go run ./cmd/vybava memory refs <home> <file>...
 ```
 
 Run `go fmt ./...` after Go edits. Use Go for utilities and system automation;

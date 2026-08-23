@@ -4,7 +4,7 @@ items:
   - id: memorylint
     kind: applet
     status: stable
-    description: Validate Obsidian-compatible AI memory files, indexes, links, limits, and fixture data.
+    description: Validate and maintain Obsidian-compatible AI memory files — schema, indexes, links, limits, fixture data, external references, and agent write hooks.
     applet: memorylint
 
   - id: fontfreeze
