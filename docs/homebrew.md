@@ -22,11 +22,14 @@ deleting the old deploy key.
 
 ## Private download contract
 
-Homebrew must authenticate twice:
+Homebrew authenticates to reach the tap:
 
 - Git credentials clone the private tap. `gh auth setup-git` configures this.
-- `HOMEBREW_GITHUB_API_TOKEN` lets the generated cask download assets from the
-  private `vybava` release.
+- `HOMEBREW_GITHUB_API_TOKEN` is what the generated cask presents when it
+  downloads the release asset. Since `vybava` became public those assets are
+  reachable without a token, so this is belt-and-braces rather than required —
+  the install path has not been re-tested without it, and the tap itself is
+  still private, so the Git credential above is not optional.
 
 Homebrew scrubs sensitive environment variables while loading a cask. The
 generated cask therefore uses a custom download strategy that reads the token
