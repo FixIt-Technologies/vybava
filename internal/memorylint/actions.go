@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -76,9 +78,10 @@ func Normalize(path string) ([]byte, bool, error) {
 		Aliases:      legacy.Aliases,
 		LastVerified: legacy.LastVerified,
 	}
-	if props.Name == "" {
-		props.Name = strings.TrimSuffix(filepath.Base(path), ".md")
-	}
+	// The schema requires name == filename stem, and `fix` is the documented
+	// remedy for a note that drifted — so the stem always wins. Only repairing an
+	// EMPTY name let `fix` report success on a note `check` still rejects.
+	props.Name = strings.TrimSuffix(filepath.Base(path), ".md")
 	if props.Status == "" {
 		props.Status = "active"
 	}
@@ -106,17 +109,23 @@ func renderNote(props properties, body string) ([]byte, error) {
 }
 
 // Fix normalizes every note in each home. With dryRun it reports without writing.
-func Fix(homes []string, dryRun bool) ([]string, error) {
-	var changed []string
+//
+// A note it cannot parse is reported and SKIPPED, never fatal: a single
+// non-note .md in a home (a README) would otherwise make every other note
+// unfixable, and because the file list is sorted, whether the abort landed
+// before or after some writes was decided by filename order — a home whose bad
+// file sorted last was left half-normalized.
+func Fix(homes []string, dryRun bool) (changed []string, failures []string, err error) {
 	for _, home := range homes {
 		files, err := noteFiles(home)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, path := range files {
 			rendered, didChange, err := Normalize(path)
 			if err != nil {
-				return nil, fmt.Errorf("%s: %w", path, err)
+				failures = append(failures, fmt.Sprintf("%s: %v", path, err))
+				continue
 			}
 			if !didChange {
 				continue
@@ -126,29 +135,42 @@ func Fix(homes []string, dryRun bool) ([]string, error) {
 				continue
 			}
 			if err := atomicWrite(path, rendered); err != nil {
-				return nil, err
+				failures = append(failures, fmt.Sprintf("%s: %v", path, err))
 			}
 		}
 	}
-	return changed, nil
+	return changed, failures, nil
 }
+
+// slugPattern is the documented note-name shape. Validating it is also what
+// confines the new note to the home: `--name ../victim/project-pwned` would
+// otherwise join straight out of it.
+var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // NewNote scaffolds a note that already satisfies the schema.
 func NewNote(home, noteType, name, description string) (string, error) {
 	if name == "" || description == "" || noteType == "" {
 		return "", fmt.Errorf("new requires --type, --name and --description")
 	}
-	if !contains(DefaultConfig().AllowedTypes, noteType) {
+	if !slugPattern.MatchString(name) {
+		return "", fmt.Errorf("name %q must be a lowercase kebab-case slug", name)
+	}
+	config, err := loadConfig(home)
+	if err != nil {
+		config = DefaultConfig()
+	}
+	if !contains(config.AllowedTypes, noteType) {
 		return "", fmt.Errorf("type %q is not allowed", noteType)
 	}
 	path := filepath.Join(home, name+".md")
 	if _, err := os.Stat(path); err == nil {
 		return "", fmt.Errorf("%s already exists", path)
 	}
-	title := strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " ")
+	title := []rune(strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " "))
+	title[0] = unicode.ToUpper(title[0])
 	rendered, err := renderNote(properties{
 		Name: name, Description: description, Type: noteType, Status: "active",
-	}, "# "+strings.ToUpper(title[:1])+title[1:]+"\n")
+	}, "# "+string(title)+"\n")
 	if err != nil {
 		return "", err
 	}
@@ -159,12 +181,25 @@ func NewNote(home, noteType, name, description string) (string, error) {
 }
 
 // Reindex renders MEMORY.md deterministically from the notes in home.
-func Reindex(home string, write bool) ([]byte, error) {
+//
+// teamIndex, when set, emits the routing line that tells a reader which OTHER
+// home owns project/reference memory. Dropping it silently is not an option:
+// the personal home's index carries that line, and regenerating without it
+// deletes the only pointer to the team home.
+//
+// A note whose frontmatter cannot be parsed, or whose type is unknown, is an
+// ERROR rather than an omission. The index is the sole discovery mechanism —
+// "open only the notes whose descriptions match the current task" — so a note
+// missing from it is a note that no longer exists as far as any reader is
+// concerned. Silently dropping one is worse than refusing to write the index.
+func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	files, err := noteFiles(home)
 	if err != nil {
 		return nil, err
 	}
+	known := DefaultConfig().AllowedTypes
 	grouped := map[string][]properties{}
+	var problems []string
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
 		if err != nil {
@@ -172,10 +207,18 @@ func Reindex(home string, write bool) ([]byte, error) {
 		}
 		var props properties
 		normalized := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
-		if bytes.HasPrefix(normalized, []byte("---\n")) {
-			if end := bytes.Index(normalized[4:], []byte("\n---")); end >= 0 {
-				_ = yaml.Unmarshal(normalized[4:4+end], &props)
-			}
+		if !bytes.HasPrefix(normalized, []byte("---\n")) {
+			problems = append(problems, fmt.Sprintf("%s: missing YAML frontmatter", path))
+			continue
+		}
+		endFront := bytes.Index(normalized[4:], []byte("\n---"))
+		if endFront < 0 {
+			problems = append(problems, fmt.Sprintf("%s: unterminated YAML frontmatter", path))
+			continue
+		}
+		if err := yaml.Unmarshal(normalized[4:4+endFront], &props); err != nil {
+			problems = append(problems, fmt.Sprintf("%s: invalid YAML: %v", path, err))
+			continue
 		}
 		if props.Name == "" {
 			props.Name = strings.TrimSuffix(filepath.Base(path), ".md")
@@ -183,12 +226,24 @@ func Reindex(home string, write bool) ([]byte, error) {
 		if props.Status == "superseded" {
 			continue
 		}
+		if !contains(known, props.Type) {
+			problems = append(problems, fmt.Sprintf("%s: type %q is not one of %s — it would be dropped from the index",
+				path, props.Type, strings.Join(known, ", ")))
+			continue
+		}
 		grouped[props.Type] = append(grouped[props.Type], props)
+	}
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("refusing to write an index that would omit %d note(s):\n  %s",
+			len(problems), strings.Join(problems, "\n  "))
 	}
 
 	var out bytes.Buffer
 	out.WriteString("# Memory Index\n\nOpen only the notes whose descriptions match the current task.\n")
-	for _, group := range []string{"user", "feedback", "project", "reference"} {
+	if teamIndex != "" {
+		fmt.Fprintf(&out, "\nTeam memory: `%s` — open it when the task touches project code.\n", teamIndex)
+	}
+	for _, group := range known {
 		notes := grouped[group]
 		if len(notes) == 0 {
 			continue
@@ -205,6 +260,84 @@ func Reindex(home string, write bool) ([]byte, error) {
 		}
 	}
 	return out.Bytes(), nil
+}
+
+// Graph reports the wikilink graph, or with similar the note pairs whose token
+// sets overlap enough to be worth reviewing as duplicates.
+func Graph(homes []string, similar bool) (string, error) {
+	type loaded struct {
+		name, path, body string
+	}
+	var notes []loaded
+	for _, home := range homes {
+		files, err := noteFiles(home)
+		if err != nil {
+			return "", err
+		}
+		for _, path := range files {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return "", err
+			}
+			var props properties
+			normalized := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
+			body := string(normalized)
+			if bytes.HasPrefix(normalized, []byte("---\n")) {
+				if e := bytes.Index(normalized[4:], []byte("\n---")); e >= 0 {
+					_ = yaml.Unmarshal(normalized[4:4+e], &props)
+					body = string(normalized[4+e:])
+				}
+			}
+			if props.Name == "" {
+				props.Name = strings.TrimSuffix(filepath.Base(path), ".md")
+			}
+			notes = append(notes, loaded{props.Name, path, props.Description + " " + body})
+		}
+	}
+
+	var out strings.Builder
+	if similar {
+		for i := 0; i < len(notes); i++ {
+			for j := i + 1; j < len(notes); j++ {
+				if score := jaccard(tokenize(notes[i].body), tokenize(notes[j].body)); score >= 0.42 {
+					fmt.Fprintf(&out, "%.2f\t%s\t%s\n", score, notes[i].path, notes[j].path)
+				}
+			}
+		}
+		return out.String(), nil
+	}
+	out.WriteString("digraph memory {\n")
+	for _, n := range notes {
+		fmt.Fprintf(&out, "  %q [label=%q];\n", n.name, n.name)
+		for _, m := range wikiLinkPattern.FindAllStringSubmatch(n.body, -1) {
+			fmt.Fprintf(&out, "  %q -> %q;\n", n.name, strings.TrimSuffix(filepath.Base(strings.TrimSpace(m[1])), ".md"))
+		}
+	}
+	out.WriteString("}\n")
+	return out.String(), nil
+}
+
+var wordPattern = regexp.MustCompile(`[a-z0-9]{3,}`)
+
+func tokenize(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range wordPattern.FindAllString(strings.ToLower(text), -1) {
+		out[w] = true
+	}
+	return out
+}
+
+func jaccard(a, b map[string]bool) float64 {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	shared := 0
+	for w := range a {
+		if b[w] {
+			shared++
+		}
+	}
+	return float64(shared) / float64(len(a)+len(b)-shared)
 }
 
 func noteFiles(home string) ([]string, error) {

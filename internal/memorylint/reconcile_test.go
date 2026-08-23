@@ -1,6 +1,7 @@
 package memorylint
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,11 +148,11 @@ func TestReindexIsDeterministicAndSkipsSuperseded(t *testing.T) {
 	write("project-a.md", "---\nname: project-a\ndescription: Use when a.\ntype: project\nstatus: active\n---\n")
 	write("project-old.md", "---\nname: project-old\ndescription: Gone.\ntype: project\nstatus: superseded\n---\n")
 
-	first, err := Reindex(home, false)
+	first, err := Reindex(home, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Reindex(home, false)
+	second, err := Reindex(home, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,3 +171,141 @@ func TestReindexIsDeterministicAndSkipsSuperseded(t *testing.T) {
 // Assembled at runtime so a repo-wide `refs --bare` sweep does not read this
 // synthetic name as a real reference from committed source.
 var goneFixture = "project" + "_gone_from_the_home.md"
+
+// Each of these reproduces a defect the pre-merge audit found by running the
+// real binary; they fail against the first draft of this port.
+
+func TestReindexRefusesToDropNotesItCannotClassify(t *testing.T) {
+	home := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(home, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("project-ok.md", "---\nname: project-ok\ndescription: Use when ok.\ntype: project\nstatus: active\n---\n")
+
+	for name, body := range map[string]string{
+		"project-broken.md":  "no frontmatter at all\n",
+		"project-badyaml.md": "---\nname: project-badyaml\ndescription: [unclosed\n---\n",
+		"project-weird.md":   "---\nname: project-weird\ndescription: Use when weird.\ntype: something-else\nstatus: active\n---\n",
+		"project-legacy.md":  "---\nname: project-legacy\ndescription: Legacy.\nmetadata:\n  type: project\n---\n",
+	} {
+		write(name, body)
+		if _, err := Reindex(home, "", false); err == nil {
+			t.Errorf("%s: reindex silently omitted an unclassifiable note instead of failing", name)
+		}
+		if err := os.Remove(filepath.Join(home, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := Reindex(home, "", false); err != nil {
+		t.Fatalf("a clean home must still index: %v", err)
+	}
+}
+
+func TestReindexEmitsTheTeamRoutingLine(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "feedback-a.md"),
+		[]byte("---\nname: feedback-a\ndescription: Use when a.\ntype: feedback\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := Reindex(home, ".claude/memory/MEMORY.md", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), "Team memory: `.claude/memory/MEMORY.md`") {
+		t.Fatalf("the routing line to the companion home was dropped:\n%s", rendered)
+	}
+}
+
+func TestNormalizeRepairsANameStemMismatch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "project-new-name.md")
+	if err := os.WriteFile(path,
+		[]byte("---\nname: project-old-name\ndescription: Use when x.\ntype: project\nstatus: active\n---\n\nBody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, changed, err := Normalize(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("fix reported success while leaving the note failing check")
+	}
+	if !strings.Contains(string(got), "name: project-new-name") {
+		t.Fatalf("name was not repaired from the filename stem:\n%s", got)
+	}
+}
+
+func TestFixSkipsUnparseableNotesInsteadOfAbortingTheRun(t *testing.T) {
+	home := t.TempDir()
+	legacy := "---\nname: %s\ndescription: Use when x.\nmetadata:\n  type: project\n---\n\nBody\n"
+	for _, name := range []string{"project-a", "project-z"} {
+		if err := os.WriteFile(filepath.Join(home, name+".md"), []byte(fmt.Sprintf(legacy, name)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Sorts between the two, so an abort here would leave the corpus half-fixed.
+	if err := os.WriteFile(filepath.Join(home, "project-readme.md"), []byte("no frontmatter\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, failures, err := Fix([]string{home}, false)
+	if err != nil {
+		t.Fatalf("one bad file must not abort the run: %v", err)
+	}
+	if len(changed) != 2 {
+		t.Errorf("both good notes must be fixed, got %v", changed)
+	}
+	if len(failures) != 1 {
+		t.Errorf("the bad file must be reported, got %v", failures)
+	}
+}
+
+func TestNewNoteStaysInsideTheHome(t *testing.T) {
+	home := t.TempDir()
+	victim := filepath.Join(filepath.Dir(home), "victim")
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewNote(home, "project", "../victim/project-pwned", "Use when x."); err == nil {
+		t.Fatal("a traversing slug must be refused")
+	}
+	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
+		t.Fatal("a note was written outside the home")
+	}
+	for _, bad := range []string{"Project-Upper", "project name", "project/sub", ".."} {
+		if _, err := NewNote(home, "project", bad, "Use when x."); err == nil {
+			t.Errorf("slug %q must be refused", bad)
+		}
+	}
+	if _, err := NewNote(home, "project", "project-good", "Use when good."); err != nil {
+		t.Errorf("a valid slug must be accepted: %v", err)
+	}
+}
+
+func TestHookTargetsRequireARealMemoryHome(t *testing.T) {
+	// This hook is registered globally, so a directory merely NAMED memory/ in an
+	// unrelated repo must not be linted as a note corpus.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "memory"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	notAHome := filepath.Join(home, "memory", "_index.md")
+	if err := os.WriteFile(notAHome, []byte("# Docs index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := HookPayload{ToolName: "Edit"}
+	p.ToolInput.FilePath = notAHome
+	if got := HookTargets(p); len(got) != 0 {
+		t.Fatalf("a memory/ directory without MEMORY.md is not a home: %v", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(home, "memory", "MEMORY.md"), []byte("# Memory Index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := HookTargets(p); len(got) != 1 {
+		t.Fatalf("once MEMORY.md exists it is a home: %v", got)
+	}
+}

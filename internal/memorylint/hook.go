@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -50,7 +51,18 @@ func memoryPath(path, cwd string) (string, bool) {
 	}
 	path = filepath.Clean(path)
 	slash := filepath.ToSlash(path)
-	return path, strings.Contains(slash, "/memory/") || strings.HasSuffix(slash, "/memory")
+	if !strings.Contains(slash, "/memory/") && !strings.HasSuffix(slash, "/memory") {
+		return "", false
+	}
+	// A directory called `memory/` is not automatically a memory home. This hook
+	// is registered globally, so without this an ordinary `docs/memory/_index.md`
+	// in an unrelated repo was linted as a note and refused with exit 2. A home
+	// is a directory carrying the index every note is required to be reachable
+	// from; a directory with no MEMORY.md cannot be one.
+	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "MEMORY.md")); err != nil {
+		return "", false
+	}
+	return path, true
 }
 
 // HookTargets returns the memory notes a hook payload is about to write.
