@@ -87,8 +87,13 @@ memorylint fix [--dry-run] <home>       # normalize notes onto the flat v2 schem
 memorylint new --home <home> --type project --name project-topic --description "Use when …"
 memorylint reindex [--write] <home>     # render MEMORY.md deterministically
 memorylint refs [--bare] <home> <file>… # find references to notes that no longer exist
+memorylint graph [--similar] <home>…    # wikilink graph, or likely-duplicate pairs
 memorylint hook                         # run as a Claude Code / Codex write hook
 ```
+
+`reindex --team-index <path>` adds the routing line pointing at the companion
+home, which is what keeps a personal index telling readers where project and
+reference memory lives. Every command above honours `--json`.
 
 `check` only ever walks the home, so it cannot see a source comment or a design
 doc pointing at a note that has been merged away — `refs` covers that half.

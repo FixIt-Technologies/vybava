@@ -381,3 +381,106 @@ func TestFixPreservesFrontmatterKeysOutsideTheSchema(t *testing.T) {
 		t.Errorf("not idempotent with extra keys:\n%s", second)
 	}
 }
+
+func TestGraphRendersEdgesAndSurvivesDegenerateHomes(t *testing.T) {
+	home := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(home, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("project-a.md", "---\nname: project-a\ndescription: Use when a.\ntype: project\nstatus: active\n---\n\nSee [[project-b]].\n")
+	write("project-b.md", "---\nname: project-b\ndescription: Use when b.\ntype: project\nstatus: active\n---\n\nNo links.\n")
+
+	dot, err := Graph([]string{home}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"digraph memory {", `"project-a" -> "project-b"`, "}"} {
+		if !strings.Contains(dot, want) {
+			t.Errorf("missing %q in:\n%s", want, dot)
+		}
+	}
+
+	data, err := GraphData([]string{home}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Edges) != 1 || data.Edges[0].From != "project-a" || data.Edges[0].To != "project-b" {
+		t.Errorf("unexpected edges %#v", data.Edges)
+	}
+
+	// Degenerate inputs must not panic or divide by zero.
+	empty := t.TempDir()
+	for _, similar := range []bool{false, true} {
+		if _, err := Graph([]string{empty}, similar); err != nil {
+			t.Errorf("empty home similar=%v: %v", similar, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(empty, "project-zero.md"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Graph([]string{empty}, true); err != nil {
+		t.Errorf("zero-byte note: %v", err)
+	}
+	if _, err := Graph([]string{filepath.Join(home, "nope")}, false); err == nil {
+		t.Error("a missing home must be an error, not silence")
+	}
+}
+
+func TestGraphSimilarFindsNearDuplicates(t *testing.T) {
+	home := t.TempDir()
+	shared := strings.Repeat("dispatch realtime provider accept queue coverage ", 12)
+	for _, name := range []string{"project-one", "project-two"} {
+		if err := os.WriteFile(filepath.Join(home, name+".md"),
+			[]byte("---\nname: "+name+"\ndescription: Use when x.\ntype: project\nstatus: active\n---\n\n"+shared), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := GraphData([]string{home}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Pairs) != 1 || data.Pairs[0].Score < 0.42 {
+		t.Fatalf("two near-identical notes must pair: %#v", data.Pairs)
+	}
+}
+
+func TestFixDoesNotReportANoteItFailedToWrite(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, "project-ro.md")
+	if err := os.WriteFile(path,
+		[]byte("---\nname: project-ro\ndescription: Use when x.\nmetadata:\n  type: project\n---\n\nBody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// atomicWrite renames into the directory, so a read-only directory fails the
+	// write while leaving the note readable.
+	if err := os.Chmod(home, 0o555); err != nil {
+		t.Skip("cannot make the directory read-only here")
+	}
+	t.Cleanup(func() { _ = os.Chmod(home, 0o755) })
+
+	changed, failures, err := Fix([]string{home}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Errorf("a note that failed to write must not be reported as changed: %v", changed)
+	}
+	if len(failures) != 1 {
+		t.Errorf("the failure must be reported: %v", failures)
+	}
+}
+
+func TestNewNoteRefusesANameTheLinterWouldReject(t *testing.T) {
+	home := t.TempDir()
+	// `topic.md` does not match the `<type>-<slug>.md` filename rule, so `new`
+	// must not be able to create a note `check` then complains about.
+	if _, err := NewNote(home, "project", "topic", "Use when x."); err == nil {
+		t.Error("a name without the type prefix must be refused")
+	}
+	if _, err := NewNote(home, "project", "project-topic", "Use when x."); err != nil {
+		t.Errorf("a conventional name must be accepted: %v", err)
+	}
+}

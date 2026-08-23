@@ -377,6 +377,13 @@ func (rt *runtime) memoryGraphCommand() *cobra.Command {
 		Short: "Print the wikilink graph, or likely duplicate pairs",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, homes []string) error {
+			if rt.json {
+				report, err := memorylint.GraphData(homes, similar)
+				if err != nil {
+					return err
+				}
+				return writeJSON(rt.stdout, report)
+			}
 			rendered, err := memorylint.Graph(homes, similar)
 			if err != nil {
 				return err

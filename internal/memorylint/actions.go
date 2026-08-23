@@ -154,13 +154,17 @@ func Fix(homes []string, dryRun bool) (changed []string, failures []string, err 
 			if !didChange {
 				continue
 			}
-			changed = append(changed, path)
 			if dryRun {
+				changed = append(changed, path)
 				continue
 			}
+			// Only after the write lands: reporting FIXED for a note still on disk
+			// in its old shape is the one lie this command must not tell.
 			if err := atomicWrite(path, rendered); err != nil {
 				failures = append(failures, fmt.Sprintf("%s: %v", path, err))
+				continue
 			}
+			changed = append(changed, path)
 		}
 	}
 	return changed, failures, nil
@@ -178,6 +182,11 @@ func NewNote(home, noteType, name, description string) (string, error) {
 	}
 	if !slugPattern.MatchString(name) {
 		return "", fmt.Errorf("name %q must be a lowercase kebab-case slug", name)
+	}
+	// `new` must not be able to create a note `check` then complains about: the
+	// filename rule is `<type>-<slug>.md`, so a bare `topic` is invalid.
+	if !strings.HasPrefix(name, noteType+"-") {
+		return "", fmt.Errorf("name %q must start with %q so the filename matches the <type>-<slug>.md rule", name, noteType+"-")
 	}
 	config, err := loadConfig(home)
 	if err != nil {
@@ -304,22 +313,70 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// Graph reports the wikilink graph, or with similar the note pairs whose token
-// sets overlap enough to be worth reviewing as duplicates.
-func Graph(homes []string, similar bool) (string, error) {
-	type loaded struct {
-		name, path, body string
+// GraphReport is the stable JSON shape of a graph run.
+type GraphReport struct {
+	Edges []GraphEdge `json:"edges,omitempty"`
+	Pairs []GraphPair `json:"pairs,omitempty"`
+}
+
+// GraphEdge is one wikilink from a note to another note's name.
+type GraphEdge struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// GraphPair is two notes similar enough to be worth reviewing as duplicates.
+type GraphPair struct {
+	Score float64 `json:"score"`
+	A     string  `json:"a"`
+	B     string  `json:"b"`
+}
+
+// GraphData returns the same information Graph renders, for --json consumers.
+func GraphData(homes []string, similar bool) (GraphReport, error) {
+	notes, err := loadForGraph(homes)
+	if err != nil {
+		return GraphReport{}, err
 	}
-	var notes []loaded
+	var report GraphReport
+	if similar {
+		sets := make([]map[string]bool, len(notes))
+		for i, n := range notes {
+			sets[i] = tokenize(n.body)
+		}
+		for i := 0; i < len(notes); i++ {
+			for j := i + 1; j < len(notes); j++ {
+				if score := jaccard(sets[i], sets[j]); score >= 0.42 {
+					report.Pairs = append(report.Pairs, GraphPair{score, notes[i].path, notes[j].path})
+				}
+			}
+		}
+		return report, nil
+	}
+	for _, n := range notes {
+		for _, m := range wikiLinkPattern.FindAllStringSubmatch(n.body, -1) {
+			report.Edges = append(report.Edges, GraphEdge{n.name, strings.TrimSuffix(filepath.Base(strings.TrimSpace(m[1])), ".md")})
+		}
+	}
+	return report, nil
+}
+
+// graphNote is one note as the graph commands need it.
+type graphNote struct {
+	name, path, body string
+}
+
+func loadForGraph(homes []string) ([]graphNote, error) {
+	var notes []graphNote
 	for _, home := range homes {
 		files, err := noteFiles(home)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		for _, path := range files {
 			raw, err := os.ReadFile(path)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			var props properties
 			normalized := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
@@ -333,27 +390,36 @@ func Graph(homes []string, similar bool) (string, error) {
 			if props.Name == "" {
 				props.Name = strings.TrimSuffix(filepath.Base(path), ".md")
 			}
-			notes = append(notes, loaded{props.Name, path, props.Description + " " + body})
+			notes = append(notes, graphNote{props.Name, path, props.Description + " " + body})
 		}
 	}
+	return notes, nil
+}
 
+// Graph renders the wikilink graph as DOT, or with similar the likely-duplicate
+// pairs as TSV.
+func Graph(homes []string, similar bool) (string, error) {
+	report, err := GraphData(homes, similar)
+	if err != nil {
+		return "", err
+	}
 	var out strings.Builder
 	if similar {
-		for i := 0; i < len(notes); i++ {
-			for j := i + 1; j < len(notes); j++ {
-				if score := jaccard(tokenize(notes[i].body), tokenize(notes[j].body)); score >= 0.42 {
-					fmt.Fprintf(&out, "%.2f\t%s\t%s\n", score, notes[i].path, notes[j].path)
-				}
-			}
+		for _, p := range report.Pairs {
+			fmt.Fprintf(&out, "%.2f\t%s\t%s\n", p.Score, p.A, p.B)
 		}
 		return out.String(), nil
+	}
+	notes, err := loadForGraph(homes)
+	if err != nil {
+		return "", err
 	}
 	out.WriteString("digraph memory {\n")
 	for _, n := range notes {
 		fmt.Fprintf(&out, "  %q [label=%q];\n", n.name, n.name)
-		for _, m := range wikiLinkPattern.FindAllStringSubmatch(n.body, -1) {
-			fmt.Fprintf(&out, "  %q -> %q;\n", n.name, strings.TrimSuffix(filepath.Base(strings.TrimSpace(m[1])), ".md"))
-		}
+	}
+	for _, e := range report.Edges {
+		fmt.Fprintf(&out, "  %q -> %q;\n", e.From, e.To)
 	}
 	out.WriteString("}\n")
 	return out.String(), nil
