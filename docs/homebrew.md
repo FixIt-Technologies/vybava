@@ -7,8 +7,7 @@ not used.
 ## Release flow
 
 1. A `v*` tag starts `.github/workflows/release.yml`.
-2. GoReleaser builds archives and checksums and creates the private GitHub
-   release.
+2. GoReleaser builds archives and checksums and creates the GitHub release.
 3. GoReleaser generates `Casks/vybava.rb` and pushes it directly to
    `FixIt-Technologies/homebrew-tap` using the repository-scoped SSH deploy key
    held in the `TAP_DEPLOY_KEY` Actions secret.
