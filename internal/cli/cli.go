@@ -23,10 +23,15 @@ import (
 
 var ErrFindings = errors.New("lint findings")
 
+// ErrHookBlocked exits 2, which is how a Claude Code / Codex PreToolUse hook
+// refuses the write. The hook prints its own reason, so ErrorText stays quiet.
+var ErrHookBlocked = errors.New("hook blocked the write")
+
 type App struct {
 	Version string
 	Stdout  io.Writer
 	Stderr  io.Writer
+	Stdin   io.Reader
 }
 
 type runtime struct {
@@ -35,6 +40,7 @@ type runtime struct {
 	json      bool
 	stdout    io.Writer
 	stderr    io.Writer
+	stdin     io.Reader
 }
 
 func (a App) Command(invokedAs string) (*cobra.Command, error) {
@@ -43,6 +49,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	}
 	if a.Stderr == nil {
 		a.Stderr = os.Stderr
+	}
+	if a.Stdin == nil {
+		a.Stdin = os.Stdin
 	}
 	c, err := catalog.Load(assets.FS)
 	if err != nil {
@@ -53,7 +62,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		return nil, err
 	}
 	rt := &runtime{
-		catalog: c, stdout: a.Stdout, stderr: a.Stderr,
+		catalog: c, stdout: a.Stdout, stderr: a.Stderr, stdin: a.Stdin,
 		installer: installer.Installer{Payload: assets.FS, Store: store},
 	}
 	if filepath.Base(invokedAs) == "memorylint" {
@@ -253,7 +262,193 @@ func (rt *runtime) doctorCommand() *cobra.Command {
 func (rt *runtime) memoryCommand() *cobra.Command {
 	command := &cobra.Command{Use: "memory", Short: "Work with AI memory files"}
 	command.AddCommand(rt.memoryLintCommand("lint [memory-home...]"))
+	rt.addMemoryActions(command)
 	return command
+}
+
+// addMemoryActions attaches the write-side commands shared by `vybava memory`
+// and the memorylint applet.
+func (rt *runtime) addMemoryActions(command *cobra.Command) {
+	command.AddCommand(rt.memoryFixCommand(), rt.memoryNewCommand(), rt.memoryReindexCommand(),
+		rt.memoryGraphCommand(), rt.memoryRefsCommand(), rt.memoryHookCommand())
+}
+
+func (rt *runtime) memoryFixCommand() *cobra.Command {
+	var dryRun bool
+	command := &cobra.Command{
+		Use:   "fix [memory-home...]",
+		Short: "Normalize notes onto the flat v2 schema",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, homes []string) error {
+			changed, failures, err := memorylint.Fix(homes, dryRun)
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				if err := writeJSON(rt.stdout, map[string]any{"changed": changed, "failures": failures, "dryRun": dryRun}); err != nil {
+					return err
+				}
+			} else {
+				verb := "FIXED"
+				if dryRun {
+					verb = "WOULD FIX"
+				}
+				for _, path := range changed {
+					if _, err := fmt.Fprintf(rt.stdout, "%s %s\n", verb, path); err != nil {
+						return err
+					}
+				}
+				for _, failure := range failures {
+					if _, err := fmt.Fprintf(rt.stderr, "SKIPPED %s\n", failure); err != nil {
+						return err
+					}
+				}
+				if _, err := fmt.Fprintf(rt.stdout, "memorylint: %d note(s) changed, %d failure(s)\n", len(changed), len(failures)); err != nil {
+					return err
+				}
+			}
+			if len(failures) > 0 {
+				return ErrFindings
+			}
+			return nil
+		},
+	}
+	command.Flags().BoolVar(&dryRun, "dry-run", false, "report without writing")
+	return command
+}
+
+func (rt *runtime) memoryNewCommand() *cobra.Command {
+	var home, noteType, name, description string
+	command := &cobra.Command{
+		Use:   "new",
+		Short: "Scaffold a note that already satisfies the schema",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			path, err := memorylint.NewNote(home, noteType, name, description)
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]any{"path": path})
+			}
+			_, err = fmt.Fprintln(rt.stdout, path)
+			return err
+		},
+	}
+	command.Flags().StringVar(&home, "home", ".", "memory home to create the note in")
+	command.Flags().StringVar(&noteType, "type", "", "user, feedback, project or reference")
+	command.Flags().StringVar(&name, "name", "", "note slug, which is also its filename stem")
+	command.Flags().StringVar(&description, "description", "", "one-line trigger description")
+	return command
+}
+
+func (rt *runtime) memoryReindexCommand() *cobra.Command {
+	var write bool
+	var teamIndex string
+	command := &cobra.Command{
+		Use:   "reindex <memory-home>",
+		Short: "Render MEMORY.md deterministically from the notes in a home",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			rendered, err := memorylint.Reindex(args[0], teamIndex, write)
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]any{"index": string(rendered), "written": write})
+			}
+			if write {
+				_, err = fmt.Fprintf(rt.stdout, "memorylint: wrote %s\n", filepath.Join(args[0], "MEMORY.md"))
+				return err
+			}
+			_, err = rt.stdout.Write(rendered)
+			return err
+		},
+	}
+	command.Flags().BoolVar(&write, "write", false, "write MEMORY.md instead of printing it")
+	command.Flags().StringVar(&teamIndex, "team-index", "", "path of the companion team index to route readers to")
+	return command
+}
+
+func (rt *runtime) memoryGraphCommand() *cobra.Command {
+	var similar bool
+	command := &cobra.Command{
+		Use:   "graph [memory-home...]",
+		Short: "Print the wikilink graph, or likely duplicate pairs",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(_ *cobra.Command, homes []string) error {
+			if rt.json {
+				report, err := memorylint.GraphData(homes, similar)
+				if err != nil {
+					return err
+				}
+				return writeJSON(rt.stdout, report)
+			}
+			rendered, err := memorylint.Graph(homes, similar)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprint(rt.stdout, rendered)
+			return err
+		},
+	}
+	command.Flags().BoolVar(&similar, "similar", false, "report likely duplicates instead of the graph")
+	return command
+}
+
+func (rt *runtime) memoryRefsCommand() *cobra.Command {
+	opts := memorylint.DefaultRefOptions()
+	var failOn string
+	command := &cobra.Command{
+		Use:   "refs <memory-home> <file>...",
+		Short: "Find references to notes that no longer exist, from outside the home",
+		Args:  cobra.MinimumNArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			report, err := memorylint.Refs(args[0], args[1:], opts)
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				if err := writeJSON(rt.stdout, report); err != nil {
+					return err
+				}
+			} else if _, err := fmt.Fprint(rt.stdout, memorylint.FormatText(report)); err != nil {
+				return err
+			}
+			switch failOn {
+			case "error":
+				if report.Errors() > 0 {
+					return ErrFindings
+				}
+			case "never":
+			default:
+				return fmt.Errorf("invalid --fail-on %q: use error or never", failOn)
+			}
+			return nil
+		},
+	}
+	command.Flags().StringVar(&opts.Prefix, "prefix", opts.Prefix, "repo-relative path the home is referenced by")
+	command.Flags().BoolVar(&opts.Bare, "bare", false, "also flag unqualified <note>.md names")
+	command.Flags().StringVar(&failOn, "fail-on", "error", "error or never")
+	return command
+}
+
+func (rt *runtime) memoryHookCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "hook",
+		Short: "Run as a Claude Code or Codex pre/post-write hook",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			decision := memorylint.RunHook(rt.stdin)
+			if !decision.Block {
+				return nil
+			}
+			if _, err := fmt.Fprintln(rt.stderr, "memorylint "+decision.Message); err != nil {
+				return err
+			}
+			return ErrHookBlocked
+		},
+	}
 }
 
 func (rt *runtime) fontfreezeApplet() *cobra.Command {
@@ -323,6 +518,7 @@ func (rt *runtime) memorylintApplet() *cobra.Command {
 	command.SetErr(rt.stderr)
 	command.PersistentFlags().BoolVar(&rt.json, "json", false, "emit stable JSON output")
 	command.AddCommand(rt.memoryLintCommand("check [memory-home...]"))
+	rt.addMemoryActions(command)
 	return command
 }
 
@@ -446,7 +642,7 @@ func ExitCode(err error) int {
 }
 
 func ErrorText(err error) string {
-	if err == nil || errors.Is(err, ErrFindings) {
+	if err == nil || errors.Is(err, ErrFindings) || errors.Is(err, ErrHookBlocked) {
 		return ""
 	}
 	return err.Error()
