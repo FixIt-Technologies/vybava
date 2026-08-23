@@ -532,3 +532,105 @@ func TestConfigErrorsPropagateInsteadOfSilentlyUsingDefaults(t *testing.T) {
 		t.Error("no index should have been written")
 	}
 }
+
+func TestSubdirectoryNotesAreReachableByFixAndReindex(t *testing.T) {
+	// check and the write hook both see subdirectory notes, so fix and reindex
+	// must too — otherwise `fix` reports "0 changed" on a note check calls an
+	// error, and reindex omits it without the omission guard firing.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(home, "inbox", "project-sub.md")
+	if err := os.WriteFile(nested,
+		[]byte("---\nname: project-wrong-stem\ndescription: Use when sub.\nmetadata:\n  type: project\n---\n\nBody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, failures, err := Fix([]string{home}, false)
+	if err != nil || len(failures) != 0 {
+		t.Fatalf("fix: %v %v", err, failures)
+	}
+	if len(changed) != 1 {
+		t.Fatalf("a subdirectory note must be reachable by fix, got %v", changed)
+	}
+	rendered, err := Reindex(home, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), "(inbox/project-sub.md)") {
+		t.Fatalf("a subdirectory note must be indexed by its path:\n%s", rendered)
+	}
+}
+
+func TestHookTreatsAnUnknownEventAsPreWrite(t *testing.T) {
+	// Failing open on an unrecognised event name let a secret through: the
+	// post-write branch lints a file that is not on disk yet and finds nothing.
+	payload := `{"hook_event_name":"pre_tool_use","tool_name":"Write","tool_input":` +
+		`{"file_path":"/u/.claude/memory/project-a.md","content":"ghp_abcdefghijklmnopqrstuvwxyz012345"}}`
+	if got := RunHook(strings.NewReader(payload)); !got.Block {
+		t.Fatal("an unrecognised event must be judged as pre-write, not waved through")
+	}
+}
+
+func TestReindexSurvivesAnEmptyConfiguredType(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".memorylint.yaml"),
+		[]byte("version: 1\nallowed_types: [\"\", project]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "project-a.md"),
+		[]byte("---\nname: project-a\ndescription: Use when a.\ntype: project\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reindex(home, "", false); err != nil {
+		t.Fatalf("an empty configured type must not panic or fail: %v", err)
+	}
+}
+
+func TestGraphJSONListsOrphanNodes(t *testing.T) {
+	home := t.TempDir()
+	for name, body := range map[string]string{
+		"project-linked": "See [[project-target]].",
+		"project-target": "No links.",
+		"project-orphan": "Nothing links here.",
+	} {
+		if err := os.WriteFile(filepath.Join(home, name+".md"),
+			[]byte("---\nname: "+name+"\ndescription: Use when x.\ntype: project\nstatus: active\n---\n\n"+body+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := GraphData([]string{home}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Nodes) != 3 {
+		t.Fatalf("every note must appear as a node, got %v", data.Nodes)
+	}
+	var orphan bool
+	for _, n := range data.Nodes {
+		if n == "project-orphan" {
+			orphan = true
+		}
+	}
+	if !orphan {
+		t.Errorf("an unlinked note must be visible to a JSON consumer: %v", data.Nodes)
+	}
+}
+
+func TestFixContinuesPastAnUnreadableHome(t *testing.T) {
+	good := t.TempDir()
+	if err := os.WriteFile(filepath.Join(good, "project-a.md"),
+		[]byte("---\nname: project-a\ndescription: Use when a.\nmetadata:\n  type: project\n---\n\nBody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	changed, failures, err := Fix([]string{filepath.Join(good, "missing"), good}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 1 {
+		t.Errorf("a later home must still be processed, got %v", changed)
+	}
+	if len(failures) != 1 {
+		t.Errorf("the unreadable home must be reported, got %v", failures)
+	}
+}

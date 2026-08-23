@@ -185,7 +185,13 @@ func RunHook(stdin io.Reader) HookDecision {
 	}
 
 	// Pre-write: judge the proposed content, which is not on disk yet.
-	if p.HookEventName == "PreToolUse" || p.HookEventName == "" {
+	//
+	// Anything that is not explicitly the post-write event is treated as
+	// pre-write. Naming the pre-write case instead meant an unrecognised event
+	// name fell through to the post-write branch, which lints a file that is not
+	// on disk yet, finds nothing, and lets the secret through — a guard failing
+	// OPEN on an unknown input.
+	if p.HookEventName != "PostToolUse" {
 		content := p.ToolInput.Content + "\n" + p.ToolInput.NewString + "\n" + addedPatchText(p.ToolInput.Command)
 		config, err := loadConfig(filepath.Dir(targets[0]))
 		if err != nil {

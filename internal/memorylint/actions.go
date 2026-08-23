@@ -143,7 +143,8 @@ func Fix(homes []string, dryRun bool) (changed []string, failures []string, err 
 	for _, home := range homes {
 		files, err := noteFiles(home)
 		if err != nil {
-			return changed, append(failures, fmt.Sprintf("%s: %v", home, err)), nil
+			failures = append(failures, fmt.Sprintf("%s: %v", home, err))
+			continue
 		}
 		for _, path := range files {
 			rendered, didChange, err := Normalize(path)
@@ -240,6 +241,7 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	}
 	known := config.AllowedTypes
 	grouped := map[string][]properties{}
+	links := map[string]string{}
 	var problems []string
 	for _, path := range files {
 		raw, err := os.ReadFile(path)
@@ -281,6 +283,11 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 				path, props.Type, strings.Join(known, ", ")))
 			continue
 		}
+		rel, relErr := filepath.Rel(home, path)
+		if relErr != nil {
+			rel = filepath.Base(path)
+		}
+		links[props.Name] = filepath.ToSlash(rel)
 		grouped[props.Type] = append(grouped[props.Type], props)
 	}
 	if len(problems) > 0 {
@@ -295,13 +302,13 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	}
 	for _, group := range known {
 		notes := grouped[group]
-		if len(notes) == 0 {
+		if len(notes) == 0 || group == "" {
 			continue
 		}
 		sort.Slice(notes, func(i, j int) bool { return notes[i].Name < notes[j].Name })
 		out.WriteString("\n## " + strings.ToUpper(group[:1]) + group[1:] + "\n\n")
 		for _, n := range notes {
-			fmt.Fprintf(&out, "- [%s](%s.md) — %s\n", n.Name, n.Name, n.Description)
+			fmt.Fprintf(&out, "- [%s](%s) — %s\n", n.Name, links[n.Name], n.Description)
 		}
 	}
 	if write {
@@ -317,8 +324,11 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// GraphReport is the stable JSON shape of a graph run.
+// GraphReport is the stable JSON shape of a graph run. Nodes are listed as well
+// as edges: the DOT form renders unlinked notes, so a JSON consumer looking for
+// orphans would otherwise get a silent zero.
 type GraphReport struct {
+	Nodes []string    `json:"nodes,omitempty"`
 	Edges []GraphEdge `json:"edges,omitempty"`
 	Pairs []GraphPair `json:"pairs,omitempty"`
 }
@@ -358,6 +368,7 @@ func GraphData(homes []string, similar bool) (GraphReport, error) {
 		return report, nil
 	}
 	for _, n := range notes {
+		report.Nodes = append(report.Nodes, n.name)
 		for _, m := range wikiLinkPattern.FindAllStringSubmatch(n.body, -1) {
 			report.Edges = append(report.Edges, GraphEdge{n.name, strings.TrimSuffix(filepath.Base(strings.TrimSpace(m[1])), ".md")})
 		}
@@ -452,17 +463,31 @@ func jaccard(a, b map[string]bool) float64 {
 	return float64(shared) / float64(len(a)+len(b)-shared)
 }
 
+// noteFiles walks the home recursively, because Lint and the write hook both do.
+// While this read the top level only, a note in a subdirectory was an error to
+// `check`, invisible to `fix` ("0 note(s) changed"), and silently omitted from
+// `reindex` — without the omission guard firing, which is precisely the outcome
+// that guard exists to prevent.
 func noteFiles(home string) ([]string, error) {
-	entries, err := os.ReadDir(home)
+	var out []string
+	err := filepath.WalkDir(home, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			if path != home && strings.HasPrefix(entry.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(filepath.Ext(entry.Name()), ".md") || entry.Name() == "MEMORY.md" {
+			return nil
+		}
+		out = append(out, path)
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-	var out []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.EqualFold(filepath.Ext(e.Name()), ".md") || e.Name() == "MEMORY.md" {
-			continue
-		}
-		out = append(out, filepath.Join(home, e.Name()))
 	}
 	sort.Strings(out)
 	return out, nil
