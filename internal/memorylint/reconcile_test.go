@@ -1,6 +1,7 @@
 package memorylint
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -752,9 +753,101 @@ func TestPostWriteIgnoresPreExistingIndexDefects(t *testing.T) {
 		[]byte("# Memory Index\n\n- [project-new](project-new.md) — Use when new.\n- [project-gone](project-gone.md) — stale.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"` + note + `"},` +
-		`"extra":"` + index + `"}`
+	// `file_path` AND `path` are both read by HookPayload, so this genuinely
+	// makes the index a co-target. An earlier version of this test hung the index
+	// off a top-level "extra" key, which the payload struct never reads — so
+	// MEMORY.md was never a target, the skip under test was never reached, and
+	// the test passed against the unfixed code. It measured nothing.
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":` +
+		`{"file_path":"` + note + `","path":"` + index + `"}}`
+	if targets := hookTargetsFor(payload); len(targets) != 2 {
+		t.Fatalf("the index must really be a co-target, got %v", targets)
+	}
 	if got := RunHook(strings.NewReader(payload)); got.Block {
 		t.Fatalf("a pre-existing index defect must not refuse this write: %s", got.Message)
+	}
+}
+
+func hookTargetsFor(payload string) []string {
+	var p HookPayload
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return nil
+	}
+	return HookTargets(p)
+}
+
+func TestPostWriteRefusesEveryNoteInAHomeItCannotValidate(t *testing.T) {
+	// The previous shape fell back to the first target's own directory, so the
+	// remaining notes in that home were silently skipped and whether a secret
+	// shipped depended on patch hunk order. Both orders must refuse now.
+	home := t.TempDir()
+	mem := filepath.Join(home, ".claude", "memory")
+	if err := os.MkdirAll(filepath.Join(mem, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(mem, "MEMORY.md"), "# Memory Index\n")
+	nested := filepath.Join(mem, "inbox", "project-sub.md")
+	write(nested, "---\nname: project-sub\ndescription: Use when sub.\ntype: project\nstatus: active\n---\n")
+	secret := filepath.Join(mem, "project-secret.md")
+	write(secret, "---\nname: project-secret\ndescription: Use when secret.\ntype: project\nstatus: active\n---\n\ntoken: ghp_abcdefghijklmnopqrstuvwxyz012345\n")
+
+	// Make the home un-lintable, the way a dangling symlink or a locked file does.
+	locked := filepath.Join(mem, "project-locked.md")
+	write(locked, "---\nname: project-locked\n---\n")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Skip("cannot make a file unreadable here")
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
+
+	for _, order := range [][2]string{{nested, secret}, {secret, nested}} {
+		payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":` +
+			`{"file_path":"` + order[0] + `","path":"` + order[1] + `"}}`
+		if got := RunHook(strings.NewReader(payload)); !got.Block {
+			t.Errorf("target order %s first: an un-lintable home must refuse, not pass silently", filepath.Base(order[0]))
+		}
+	}
+}
+
+func TestPostWriteDoesNotInventAWikilinkFailure(t *testing.T) {
+	// The fallback linted the note's own subdirectory, so a valid link to a root
+	// sibling was reported as missing — a fabricated diagnosis on a valid write.
+	home := t.TempDir()
+	mem := filepath.Join(home, ".claude", "memory")
+	if err := os.MkdirAll(filepath.Join(mem, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(mem, "MEMORY.md"), "# Memory Index\n")
+	write(filepath.Join(mem, "project-root.md"), "---\nname: project-root\ndescription: Use when root.\ntype: project\nstatus: active\n---\n")
+	nested := filepath.Join(mem, "inbox", "project-sub.md")
+	write(nested, "---\nname: project-sub\ndescription: Use when sub.\ntype: project\nstatus: active\n---\n\nSee [[project-root]].\n")
+	locked := filepath.Join(mem, "project-locked.md")
+	write(locked, "---\nname: project-locked\n---\n")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Skip("cannot make a file unreadable here")
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
+
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"` + nested + `"}}`
+	got := RunHook(strings.NewReader(payload))
+	if !got.Block {
+		t.Fatal("an un-lintable home must refuse")
+	}
+	if strings.Contains(got.Message, "M006") || strings.Contains(got.Message, "wikilink") {
+		t.Errorf("refusal must name the real cause, not invent a link failure: %s", got.Message)
+	}
+	if !strings.Contains(got.Message, "could not validate") {
+		t.Errorf("refusal must say why: %s", got.Message)
 	}
 }

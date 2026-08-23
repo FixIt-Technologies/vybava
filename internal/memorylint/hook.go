@@ -205,50 +205,48 @@ func RunHook(stdin io.Reader) HookDecision {
 
 	// Post-write: the notes exist, so lint them for real — from the HOME ROOT,
 	// not the note's own directory. Linting `inbox/` as if it were a home makes
-	// every wikilink to a sibling at the root an unresolved M006, so the hook
-	// refuses a perfectly valid write. Roots are deduplicated so a multi-file
-	// patch lints each home once.
+	// every wikilink to a sibling at the root an unresolved M006, refusing a
+	// perfectly valid write.
+	//
+	// Targets are grouped by home and each home is linted exactly once. If a home
+	// cannot be linted at all, the write is REFUSED and the reason is named: this
+	// is the only check covering a writer PreToolUse cannot see (a Bash heredoc),
+	// so a silent pass here is a secret shipped.
+	//
+	// An earlier attempt to soften that by falling back to the note's own
+	// directory was worse on both counts. It re-created the M006 false-block it
+	// was meant to remove — reporting "wikilink target does not exist" for a
+	// target that exists one directory up — and because the fallback only ever
+	// covered the FIRST target, the remaining notes in that home were silently
+	// skipped, so whether a secret shipped depended on patch hunk order.
+	//
+	// MEMORY.md is excluded here, once, when the groups are built: a payload that
+	// touches the index alongside a note must not be refused over index defects
+	// that predate the write.
 	var messages []string
-	linted := map[string]bool{}
+	byRoot := map[string][]string{}
+	var roots []string
 	for _, path := range targets {
 		if filepath.Base(path) == "MEMORY.md" {
 			continue
 		}
 		root := memoryHomeRoot(path)
-		if linted[root] {
-			continue
+		if _, seen := byRoot[root]; !seen {
+			roots = append(roots, root)
 		}
-		linted[root] = true
-
+		byRoot[root] = append(byRoot[root], path)
+	}
+	for _, root := range roots {
 		report, err := Lint([]string{root})
 		if err != nil {
-			// Never swallow this. Widening the lint from the note's directory to
-			// the whole home also widened what can make it fail: one unreadable
-			// entry anywhere under the home used to disarm the guard for every
-			// note beneath it, silently returning 0. Post-write is the ONLY check
-			// covering a writer that PreToolUse cannot see (a Bash heredoc), so a
-			// silent pass there is a secret shipped.
-			//
-			// Fall back to the note's own directory, which is what this scope was
-			// before, and if even that fails say so instead of allowing the write.
-			report, err = Lint([]string{filepath.Dir(path)})
-			if err != nil {
-				messages = append(messages, fmt.Sprintf("could not validate %s: %v", path, err))
-				continue
-			}
+			messages = append(messages, fmt.Sprintf("could not validate %s: %v", root, err))
+			continue
 		}
-
 		for _, f := range report.Findings {
 			if f.Severity != SeverityError {
 				continue
 			}
-			for _, target := range targets {
-				// MEMORY.md is skipped above as a note; it must be skipped as a
-				// match too, or a payload touching an index alongside a note is
-				// refused over index defects that were already there.
-				if filepath.Base(target) == "MEMORY.md" {
-					continue
-				}
+			for _, target := range byRoot[root] {
 				if sameFile(f.Path, target) {
 					messages = append(messages, formatFinding(f))
 				}
