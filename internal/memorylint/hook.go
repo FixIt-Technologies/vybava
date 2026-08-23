@@ -203,19 +203,34 @@ func RunHook(stdin io.Reader) HookDecision {
 		return HookDecision{}
 	}
 
-	// Post-write: the notes exist, so lint them for real.
+	// Post-write: the notes exist, so lint them for real — from the HOME ROOT,
+	// not the note's own directory. Linting `inbox/` as if it were a home makes
+	// every wikilink to a sibling at the root an unresolved M006, so the hook
+	// refuses a perfectly valid write. Roots are deduplicated so a multi-file
+	// patch lints each home once.
 	var messages []string
+	linted := map[string]bool{}
 	for _, path := range targets {
 		if filepath.Base(path) == "MEMORY.md" {
 			continue
 		}
-		report, err := Lint([]string{filepath.Dir(path)})
+		root := memoryHomeRoot(path)
+		if linted[root] {
+			continue
+		}
+		linted[root] = true
+		report, err := Lint([]string{root})
 		if err != nil {
 			continue
 		}
 		for _, f := range report.Findings {
-			if f.Severity == SeverityError && sameFile(f.Path, path) {
-				messages = append(messages, formatFinding(f))
+			if f.Severity != SeverityError {
+				continue
+			}
+			for _, target := range targets {
+				if sameFile(f.Path, target) {
+					messages = append(messages, formatFinding(f))
+				}
 			}
 		}
 	}
@@ -223,6 +238,27 @@ func RunHook(stdin io.Reader) HookDecision {
 		return HookDecision{Block: true, Message: strings.Join(messages, "\n")}
 	}
 	return HookDecision{}
+}
+
+// memoryHomeRoot returns the directory a note's home is rooted at — the
+// `memory` directory itself, not whatever subdirectory the note happens to sit
+// in.
+func memoryHomeRoot(path string) string {
+	dir := filepath.Dir(path)
+	for cur := dir; ; {
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			break
+		}
+		if filepath.Base(cur) == "memory" {
+			return cur
+		}
+		if _, err := os.Stat(filepath.Join(cur, "MEMORY.md")); err == nil {
+			return cur
+		}
+		cur = parent
+	}
+	return dir
 }
 
 func sameFile(a, b string) bool {

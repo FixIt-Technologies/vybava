@@ -197,9 +197,6 @@ func NewNote(home, noteType, name, description string) (string, error) {
 		return "", fmt.Errorf("type %q is not allowed", noteType)
 	}
 	path := filepath.Join(home, name+".md")
-	if _, err := os.Stat(path); err == nil {
-		return "", fmt.Errorf("%s already exists", path)
-	}
 	title := []rune(strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " "))
 	title[0] = unicode.ToUpper(title[0])
 	rendered, err := renderNote(properties{
@@ -208,7 +205,21 @@ func NewNote(home, noteType, name, description string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, rendered, 0o644); err != nil {
+	// O_EXCL rather than stat-then-write: the gap between the two let another
+	// writer — or a symlink planted in a shared home — be followed and
+	// overwritten. An intervening entry now fails the command.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			return "", fmt.Errorf("%s already exists", path)
+		}
+		return "", err
+	}
+	if _, err := f.Write(rendered); err != nil {
+		_ = f.Close()
+		return "", err
+	}
+	if err := f.Close(); err != nil {
 		return "", err
 	}
 	return path, nil

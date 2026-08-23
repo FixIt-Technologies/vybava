@@ -634,3 +634,71 @@ func TestFixContinuesPastAnUnreadableHome(t *testing.T) {
 		t.Errorf("the unreadable home must be reported, got %v", failures)
 	}
 }
+
+func TestPostWriteLintsFromTheHomeRootNotTheNotesDirectory(t *testing.T) {
+	// Linting `inbox/` as if it were a home makes a wikilink to a root sibling an
+	// unresolved M006, so the hook refuses a perfectly valid write.
+	home := t.TempDir()
+	mem := filepath.Join(home, ".claude", "memory")
+	if err := os.MkdirAll(filepath.Join(mem, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(mem, "project-root.md"), "---\nname: project-root\ndescription: Use when root.\ntype: project\nstatus: active\n---\n")
+	write(filepath.Join(mem, "MEMORY.md"), "# Memory Index\n\n- [project-root](project-root.md) — Use when root.\n- [project-sub](inbox/project-sub.md) — Use when sub.\n")
+	nested := filepath.Join(mem, "inbox", "project-sub.md")
+	write(nested, "---\nname: project-sub\ndescription: Use when sub.\ntype: project\nstatus: active\n---\n\nSee [[project-root]].\n")
+
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"` + nested + `"}}`
+	if got := RunHook(strings.NewReader(payload)); got.Block {
+		t.Fatalf("a valid nested note must not be refused: %s", got.Message)
+	}
+}
+
+func TestNewNoteRefusesToFollowAnEntryCreatedUnderIt(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(home, "project-taken.md")
+	if err := os.WriteFile(target, []byte("existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewNote(home, "project", "project-taken", "Use when x."); err == nil {
+		t.Fatal("an existing path must not be overwritten")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "existing\n" {
+		t.Fatalf("the existing file was clobbered: %q", got)
+	}
+}
+
+func TestFilenameRuleFollowsTheHomesConfiguredTypes(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".memorylint.yaml"),
+		[]byte("version: 1\nallowed_types: [user, feedback, project, reference, runbook]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, err := NewNote(home, "runbook", "runbook-topic", "Use when topic.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "MEMORY.md"),
+		[]byte("# Memory Index\n\n- [runbook-topic](runbook-topic.md) — Use when topic.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Lint([]string{home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if f.Rule == "M002" {
+			t.Errorf("new created %s and check then rejected its name: %s", filepath.Base(path), f.Message)
+		}
+	}
+}

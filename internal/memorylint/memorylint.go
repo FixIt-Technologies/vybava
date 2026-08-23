@@ -255,7 +255,7 @@ func lintRoot(root string, config Config) ([]Finding, int, error) {
 				findings = append(findings, finding("M001", SeverityError, path, 1, "name %q must match filename stem %q", parsed.Name, stem))
 			}
 		}
-		if !kebabPattern.MatchString(filepath.Base(path)) {
+		if !kebabPatternFor(config.AllowedTypes).MatchString(filepath.Base(path)) {
 			findings = append(findings, finding("M002", SeverityWarning, path, 1, "filename must be <type>-<kebab-slug>.md"))
 		}
 		if lines := lineCount(data); lines > config.MaxEntryLines {
@@ -272,6 +272,23 @@ func lintRoot(root string, config Config) ([]Finding, int, error) {
 	findings = append(findings, linkFindings(root, entries, indexes)...)
 	findings = append(findings, identityFindings(entries)...)
 	return findings, files, nil
+}
+
+// kebabPatternFor builds the filename rule from the home's configured types, so
+// a home that allows an extra type can hold notes named after it. With the four
+// defaults hardcoded, `new --type runbook` created a file `check` then warned
+// about — the two commands disagreeing about the same note.
+func kebabPatternFor(types []string) *regexp.Regexp {
+	var quoted []string
+	for _, t := range types {
+		if t != "" {
+			quoted = append(quoted, regexp.QuoteMeta(t))
+		}
+	}
+	if len(quoted) == 0 {
+		return kebabPattern
+	}
+	return regexp.MustCompile(`^(?:` + strings.Join(quoted, "|") + `)-[a-z0-9]+(?:-[a-z0-9]+)*\.md$`)
 }
 
 func loadConfig(root string) (Config, error) {
