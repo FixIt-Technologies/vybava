@@ -54,15 +54,48 @@ func memoryPath(path, cwd string) (string, bool) {
 	if !strings.Contains(slash, "/memory/") && !strings.HasSuffix(slash, "/memory") {
 		return "", false
 	}
-	// A directory called `memory/` is not automatically a memory home. This hook
-	// is registered globally, so without this an ordinary `docs/memory/_index.md`
-	// in an unrelated repo was linted as a note and refused with exit 2. A home
-	// is a directory carrying the index every note is required to be reachable
-	// from; a directory with no MEMORY.md cannot be one.
-	if _, err := os.Stat(filepath.Join(filepath.Dir(path), "MEMORY.md")); err != nil {
+	if !insideMemoryHome(slash) {
 		return "", false
 	}
 	return path, true
+}
+
+// canonicalHome matches the two homes the memory doctrine defines: the committed
+// team home `<repo>/.claude/memory` and the agent-managed personal home
+// `~/.claude/projects/<slug>/memory`, including anything nested under either.
+var canonicalHome = regexp.MustCompile(`/\.claude/(?:projects/[^/]+/)?memory(?:/|$)`)
+
+// insideMemoryHome decides whether a path under some directory called `memory`
+// is really a note.
+//
+// A directory merely NAMED memory/ is not a home: this hook is registered
+// globally, and an ordinary `docs/memory/_index.md` in an unrelated repo was
+// being refused with exit 2. But the converse trap is worse — keying on "the
+// note's own directory contains MEMORY.md" silently disabled the hook for every
+// note in a subdirectory (`.claude/memory/inbox/` exists in FixIt's team home),
+// for a home not yet indexed, and for the very first note that creates one.
+// Secrets sailed through exactly where the guard was most needed.
+//
+// So: a canonical home always counts, indexed or not, at any depth; any other
+// `memory/` directory counts only if it, or an ancestor up to and including the
+// directory named `memory`, actually carries a MEMORY.md.
+func insideMemoryHome(slash string) bool {
+	if canonicalHome.MatchString(slash) {
+		return true
+	}
+	dir := filepath.FromSlash(slash)
+	for {
+		dir = filepath.Dir(dir)
+		if dir == "" || dir == "." || dir == string(filepath.Separator) {
+			return false
+		}
+		if _, err := os.Stat(filepath.Join(dir, "MEMORY.md")); err == nil {
+			return true
+		}
+		if filepath.Base(dir) == "memory" {
+			return false
+		}
+	}
 }
 
 // HookTargets returns the memory notes a hook payload is about to write.

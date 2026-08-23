@@ -68,6 +68,17 @@ func Normalize(path string) ([]byte, bool, error) {
 	if err := yaml.Unmarshal(front, &legacy); err != nil {
 		return nil, false, fmt.Errorf("invalid YAML: %w", err)
 	}
+	// Anything outside the v2 schema is carried through untouched. `fix` is the
+	// documented repair for a drifted note, and no lint rule forbids extra keys —
+	// so dropping them silently would make the recommended remedy destroy data
+	// the linter considers perfectly legal.
+	var all map[string]any
+	if err := yaml.Unmarshal(front, &all); err != nil {
+		return nil, false, fmt.Errorf("invalid YAML: %w", err)
+	}
+	for _, k := range []string{"name", "description", "type", "status", "tags", "aliases", "last-verified", "metadata"} {
+		delete(all, k)
+	}
 
 	props := properties{
 		Name:         legacy.Name,
@@ -93,17 +104,30 @@ func Normalize(path string) ([]byte, bool, error) {
 		}
 	}
 
-	rendered, err := renderNote(props, string(body))
+	rendered, err := renderNote(props, string(body), all)
 	if err != nil {
 		return nil, false, err
 	}
 	return rendered, !bytes.Equal(rendered, raw), nil
 }
 
-func renderNote(props properties, body string) ([]byte, error) {
+func renderNote(props properties, body string, extra map[string]any) ([]byte, error) {
 	front, err := yaml.Marshal(props)
 	if err != nil {
 		return nil, err
+	}
+	// Sorted, so a note round-trips to the same bytes every time.
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		rest, err := yaml.Marshal(map[string]any{k: extra[k]})
+		if err != nil {
+			return nil, err
+		}
+		front = append(front, rest...)
 	}
 	return []byte("---\n" + string(front) + "---\n\n" + strings.TrimRight(strings.TrimLeft(body, "\r\n"), "\r\n") + "\n"), nil
 }
@@ -119,7 +143,7 @@ func Fix(homes []string, dryRun bool) (changed []string, failures []string, err 
 	for _, home := range homes {
 		files, err := noteFiles(home)
 		if err != nil {
-			return nil, nil, err
+			return changed, append(failures, fmt.Sprintf("%s: %v", home, err)), nil
 		}
 		for _, path := range files {
 			rendered, didChange, err := Normalize(path)
@@ -170,7 +194,7 @@ func NewNote(home, noteType, name, description string) (string, error) {
 	title[0] = unicode.ToUpper(title[0])
 	rendered, err := renderNote(properties{
 		Name: name, Description: description, Type: noteType, Status: "active",
-	}, "# "+string(title)+"\n")
+	}, "# "+string(title)+"\n", nil)
 	if err != nil {
 		return "", err
 	}
@@ -197,7 +221,11 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	known := DefaultConfig().AllowedTypes
+	config, err := loadConfig(home)
+	if err != nil {
+		config = DefaultConfig()
+	}
+	known := config.AllowedTypes
 	grouped := map[string][]properties{}
 	var problems []string
 	for _, path := range files {
@@ -205,7 +233,10 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		var props properties
+		// Read through the legacy envelope the same way Normalize does, so a note
+		// that has not been `fix`ed yet still indexes instead of being reported as
+		// typeless. Refusing on a corpus the tool can already read is not safety.
+		var legacy legacyEnvelope
 		normalized := bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n"))
 		if !bytes.HasPrefix(normalized, []byte("---\n")) {
 			problems = append(problems, fmt.Sprintf("%s: missing YAML frontmatter", path))
@@ -216,9 +247,15 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 			problems = append(problems, fmt.Sprintf("%s: unterminated YAML frontmatter", path))
 			continue
 		}
-		if err := yaml.Unmarshal(normalized[4:4+endFront], &props); err != nil {
+		if err := yaml.Unmarshal(normalized[4:4+endFront], &legacy); err != nil {
 			problems = append(problems, fmt.Sprintf("%s: invalid YAML: %v", path, err))
 			continue
+		}
+		props := properties{
+			Name:        legacy.Name,
+			Description: legacy.Description,
+			Type:        firstNonEmpty(legacy.Type, legacy.Metadata.Type),
+			Status:      firstNonEmpty(legacy.Status, legacy.Metadata.Status),
 		}
 		if props.Name == "" {
 			props.Name = strings.TrimSuffix(filepath.Base(path), ".md")
@@ -227,7 +264,7 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 			continue
 		}
 		if !contains(known, props.Type) {
-			problems = append(problems, fmt.Sprintf("%s: type %q is not one of %s — it would be dropped from the index",
+			problems = append(problems, fmt.Sprintf("%s: type %q is not one of %s — it would be dropped from the index (run `memorylint fix` if the note still carries a legacy envelope)",
 				path, props.Type, strings.Join(known, ", ")))
 			continue
 		}
@@ -255,7 +292,12 @@ func Reindex(home, teamIndex string, write bool) ([]byte, error) {
 		}
 	}
 	if write {
-		if err := os.WriteFile(filepath.Join(home, "MEMORY.md"), out.Bytes(), 0o644); err != nil {
+		index := filepath.Join(home, "MEMORY.md")
+		if _, statErr := os.Stat(index); statErr == nil {
+			if err := atomicWrite(index, out.Bytes()); err != nil {
+				return nil, err
+			}
+		} else if err := os.WriteFile(index, out.Bytes(), 0o644); err != nil {
 			return nil, err
 		}
 	}

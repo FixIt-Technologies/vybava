@@ -189,7 +189,6 @@ func TestReindexRefusesToDropNotesItCannotClassify(t *testing.T) {
 		"project-broken.md":  "no frontmatter at all\n",
 		"project-badyaml.md": "---\nname: project-badyaml\ndescription: [unclosed\n---\n",
 		"project-weird.md":   "---\nname: project-weird\ndescription: Use when weird.\ntype: something-else\nstatus: active\n---\n",
-		"project-legacy.md":  "---\nname: project-legacy\ndescription: Legacy.\nmetadata:\n  type: project\n---\n",
 	} {
 		write(name, body)
 		if _, err := Reindex(home, "", false); err == nil {
@@ -307,5 +306,78 @@ func TestHookTargetsRequireARealMemoryHome(t *testing.T) {
 	}
 	if got := HookTargets(p); len(got) != 1 {
 		t.Fatalf("once MEMORY.md exists it is a home: %v", got)
+	}
+}
+
+func TestReindexReadsThroughTheLegacyEnvelope(t *testing.T) {
+	// A note that has not been `fix`ed yet is still readable, so refusing on it
+	// would make the tool unusable on the live corpus rather than safe.
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "project-legacy.md"),
+		[]byte("---\nname: project-legacy\ndescription: Use when legacy.\nmetadata:\n  type: project\n  status: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rendered, err := Reindex(home, "", false)
+	if err != nil {
+		t.Fatalf("a legacy-envelope note must still index: %v", err)
+	}
+	if !strings.Contains(string(rendered), "project-legacy") {
+		t.Fatalf("legacy note missing from the index:\n%s", rendered)
+	}
+}
+
+func TestReindexHonoursTheHomesConfiguredTypes(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, ".memorylint.yaml"),
+		[]byte("version: 1\nallowed_types: [user, feedback, project, reference, runbook]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "runbook-b.md"),
+		[]byte("---\nname: runbook-b\ndescription: Use when b.\ntype: runbook\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// `new` and `check` accept this type, so `reindex` refusing it forever would
+	// make the home permanently un-indexable.
+	rendered, err := Reindex(home, "", false)
+	if err != nil {
+		t.Fatalf("a configured type must be indexable: %v", err)
+	}
+	if !strings.Contains(string(rendered), "runbook-b") {
+		t.Fatalf("configured type missing from the index:\n%s", rendered)
+	}
+}
+
+func TestFixPreservesFrontmatterKeysOutsideTheSchema(t *testing.T) {
+	// No lint rule forbids extra keys, so the documented repair command must not
+	// destroy them.
+	home := t.TempDir()
+	path := filepath.Join(home, "project-extra.md")
+	if err := os.WriteFile(path, []byte("---\nname: project-extra\ndescription: Use when x.\n"+
+		"metadata:\n  type: project\nsource: https://example.com/spec\nowner: lukas\nrelated:\n  - project-other\n---\n\nBody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Fix([]string{home}, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(got)
+	for _, want := range []string{"type: project", "source: https://example.com/spec", "owner: lukas", "related:", "project-other", "Body"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("fix destroyed %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "metadata:") {
+		t.Errorf("the legacy envelope should be gone:\n%s", out)
+	}
+	// And it must still round-trip to the same bytes.
+	second, changed, err := Normalize(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed || string(second) != out {
+		t.Errorf("not idempotent with extra keys:\n%s", second)
 	}
 }
