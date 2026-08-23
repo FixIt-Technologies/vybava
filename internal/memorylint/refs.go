@@ -8,13 +8,28 @@ import (
 	"strings"
 )
 
-// noteNamePattern matches a bare `<note>.md` mention in prose — the shape a
+// noteNamePatternFor matches a bare `<note>.md` mention in prose — the shape a
 // consolidation leaves behind when it merges away the note a line points at. A
 // separator is required (`project-`, `feedback_`, …): a bare prefix word is not
 // a note name, and real sibling documents are called `reference.md`.
 // A preceding `/` (a repo path) or `[` (a wikilink, checked elsewhere)
 // disqualifies the match.
-var noteNamePattern = regexp.MustCompile(`(?:^|[^\w./\-\[])((?:project|reference|feedback|user)[-_][A-Za-z0-9_-]+)\.md\b`)
+//
+// The prefixes come from the home's configured types, like every other command:
+// hardcoding the four defaults meant a reference to a custom-typed note was
+// invisible here while Lint, Fix, New and Reindex all recognised it.
+func noteNamePatternFor(types []string) *regexp.Regexp {
+	var quoted []string
+	for _, t := range types {
+		if t != "" {
+			quoted = append(quoted, regexp.QuoteMeta(t))
+		}
+	}
+	if len(quoted) == 0 {
+		quoted = DefaultConfig().AllowedTypes
+	}
+	return regexp.MustCompile(`(?:^|[^\w./\-\[])((?:` + strings.Join(quoted, "|") + `)[-_][A-Za-z0-9_-]+)\.md\b`)
+}
 
 // RefOptions configures a reference sweep of files OUTSIDE a memory home.
 type RefOptions struct {
@@ -49,16 +64,23 @@ func Refs(home string, paths []string, opts RefOptions) (Report, error) {
 		return Report{}, fmt.Errorf("memory root is not a directory: %s", absolute)
 	}
 
-	known := map[string]bool{}
-	dir, err := os.ReadDir(absolute)
+	// Recursive, because everything else that walks a home is: Lint, Fix, Reindex
+	// and the write hook all see `inbox/project-sub.md`. A flat read here meant a
+	// perfectly valid reference to a subdirectory note was reported as pointing at
+	// a note that does not exist — a false failure in the CI lane that runs this.
+	files, err := noteFiles(absolute)
 	if err != nil {
 		return Report{}, err
 	}
-	for _, e := range dir {
-		if !e.IsDir() && strings.EqualFold(filepath.Ext(e.Name()), ".md") {
-			known[e.Name()] = true
-		}
+	known := map[string]bool{"MEMORY.md": true}
+	for _, f := range files {
+		known[filepath.Base(f)] = true
 	}
+	config, err := loadConfig(absolute)
+	if err != nil {
+		return Report{}, err
+	}
+	barePattern := noteNamePatternFor(config.AllowedTypes)
 
 	pathPattern := regexp.MustCompile(regexp.QuoteMeta(prefix) + `/([A-Za-z0-9][A-Za-z0-9_.-]*\.md)`)
 	report := Report{Roots: []string{absolute}}
@@ -81,7 +103,7 @@ func Refs(home string, paths []string, opts RefOptions) (Report, error) {
 			if !opts.Bare {
 				continue
 			}
-			for _, m := range noteNamePattern.FindAllStringSubmatch(line, -1) {
+			for _, m := range barePattern.FindAllStringSubmatch(line, -1) {
 				name := m[1] + ".md"
 				if !known[name] && !seen[name] {
 					report.Findings = append(report.Findings, finding("M021", SeverityError, path, n+1,

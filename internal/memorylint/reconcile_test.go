@@ -129,11 +129,11 @@ func TestRefsFlagsOnlyUnresolvedReferences(t *testing.T) {
 func TestNoteNamePatternIgnoresBarePrefixWords(t *testing.T) {
 	// `reference.md` is a real sibling document in several skills.
 	for _, quiet := range []string{" see reference.md#anchor", " see user.md", " see project.md", " see .claude/docs/project-old.md"} {
-		if m := noteNamePattern.FindStringSubmatch(quiet); m != nil {
+		if m := noteNamePatternFor(nil).FindStringSubmatch(quiet); m != nil {
 			t.Errorf("false positive on %q: %v", quiet, m)
 		}
 	}
-	if noteNamePattern.FindStringSubmatch(" see project-a.md") == nil {
+	if noteNamePatternFor(nil).FindStringSubmatch(" see project-a.md") == nil {
 		t.Error("a separator-qualified name must still match")
 	}
 }
@@ -849,5 +849,57 @@ func TestPostWriteDoesNotInventAWikilinkFailure(t *testing.T) {
 	}
 	if !strings.Contains(got.Message, "could not validate") {
 		t.Errorf("refusal must say why: %s", got.Message)
+	}
+}
+
+func TestRefsSeesSubdirectoryNotesAndConfiguredTypes(t *testing.T) {
+	// refs is the only walker that was flat, so a valid reference to a
+	// subdirectory note was reported as pointing at a note that does not exist —
+	// a false failure in the CI lane that runs it.
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".memorylint.yaml"),
+		[]byte("version: 1\nallowed_types: [user, feedback, project, reference, runbook]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "inbox", "project-sub.md"),
+		[]byte("---\nname: project-sub\ndescription: Use when sub.\ntype: project\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "runbook-deploy.md"),
+		[]byte("---\nname: runbook-deploy\ndescription: Use when deploying.\ntype: runbook\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	src := filepath.Join(t.TempDir(), "guide.md")
+	body := "See `notes/memory/project-sub.md` and `notes/memory/runbook-deploy.md`.\n" +
+		"Also see project-sub.md and runbook-deploy.md.\n" +
+		"But " + goneFixture + " is gone.\n"
+	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := Refs(home, []string{src}, RefOptions{Prefix: "notes/memory", Bare: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range report.Findings {
+		if strings.Contains(f.Message, "project-sub") {
+			t.Errorf("a subdirectory note must resolve: %s", f.Message)
+		}
+		if strings.Contains(f.Message, "runbook-deploy") {
+			t.Errorf("a configured-type note must resolve: %s", f.Message)
+		}
+	}
+	var sawGone bool
+	for _, f := range report.Findings {
+		if strings.Contains(f.Message, "gone_from_the_home") {
+			sawGone = true
+		}
+	}
+	if !sawGone {
+		t.Errorf("a genuinely missing note must still be reported: %#v", report.Findings)
 	}
 }
