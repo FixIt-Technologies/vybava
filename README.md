@@ -31,8 +31,8 @@ go build -o ./bin/vybava ./cmd/vybava
 
 ## Install with Homebrew
 
-Výbava and its Homebrew tap are private. Authenticate Git and provide Homebrew
-with a GitHub token that can read private release assets:
+Výbava is public; its Homebrew tap is still private, so Homebrew needs a token
+that can read the tap's release assets:
 
 ```sh
 gh auth setup-git

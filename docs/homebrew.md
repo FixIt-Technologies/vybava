@@ -7,8 +7,7 @@ not used.
 ## Release flow
 
 1. A `v*` tag starts `.github/workflows/release.yml`.
-2. GoReleaser builds archives and checksums and creates the private GitHub
-   release.
+2. GoReleaser builds archives and checksums and creates the GitHub release.
 3. GoReleaser generates `Casks/vybava.rb` and pushes it directly to
    `FixIt-Technologies/homebrew-tap` using the repository-scoped SSH deploy key
    held in the `TAP_DEPLOY_KEY` Actions secret.
@@ -22,11 +21,14 @@ deleting the old deploy key.
 
 ## Private download contract
 
-Homebrew must authenticate twice:
+Homebrew authenticates to reach the tap:
 
 - Git credentials clone the private tap. `gh auth setup-git` configures this.
-- `HOMEBREW_GITHUB_API_TOKEN` lets the generated cask download assets from the
-  private `vybava` release.
+- `HOMEBREW_GITHUB_API_TOKEN` is what the generated cask presents when it
+  downloads the release asset. Since `vybava` became public those assets are
+  reachable without a token, so this is belt-and-braces rather than required —
+  the install path has not been re-tested without it, and the tap itself is
+  still private, so the Git credential above is not optional.
 
 Homebrew scrubs sensitive environment variables while loading a cask. The
 generated cask therefore uses a custom download strategy that reads the token
