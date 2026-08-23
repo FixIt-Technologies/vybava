@@ -702,3 +702,59 @@ func TestFilenameRuleFollowsTheHomesConfiguredTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestPostWriteDoesNotFailOpenWhenTheHomeIsPartlyUnreadable(t *testing.T) {
+	// Post-write is the only check covering a writer PreToolUse cannot see (a
+	// Bash heredoc), so swallowing a lint error there ships the secret.
+	home := t.TempDir()
+	mem := filepath.Join(home, ".claude", "memory")
+	if err := os.MkdirAll(filepath.Join(mem, "inbox"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mem, "MEMORY.md"), []byte("# Memory Index\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(mem, "inbox", "project-sub.md")
+	if err := os.WriteFile(nested,
+		[]byte("---\nname: project-sub\ndescription: Use when sub.\ntype: project\nstatus: active\n---\n\ntoken: ghp_abcdefghijklmnopqrstuvwxyz012345\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	locked := filepath.Join(mem, "project-locked.md")
+	if err := os.WriteFile(locked, []byte("---\nname: project-locked\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Skip("cannot make a file unreadable here")
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
+
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"` + nested + `"}}`
+	if got := RunHook(strings.NewReader(payload)); !got.Block {
+		t.Fatal("an unreadable sibling must not disarm the guard for this note")
+	}
+}
+
+func TestPostWriteIgnoresPreExistingIndexDefects(t *testing.T) {
+	// A payload that touches a note AND the index must not be refused because the
+	// index already had a dangling entry the write did not introduce.
+	home := t.TempDir()
+	mem := filepath.Join(home, ".claude", "memory")
+	if err := os.MkdirAll(mem, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	note := filepath.Join(mem, "project-new.md")
+	if err := os.WriteFile(note,
+		[]byte("---\nname: project-new\ndescription: Use when new.\ntype: project\nstatus: active\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(mem, "MEMORY.md")
+	if err := os.WriteFile(index,
+		[]byte("# Memory Index\n\n- [project-new](project-new.md) — Use when new.\n- [project-gone](project-gone.md) — stale.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"` + note + `"},` +
+		`"extra":"` + index + `"}`
+	if got := RunHook(strings.NewReader(payload)); got.Block {
+		t.Fatalf("a pre-existing index defect must not refuse this write: %s", got.Message)
+	}
+}

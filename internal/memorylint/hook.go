@@ -219,15 +219,36 @@ func RunHook(stdin io.Reader) HookDecision {
 			continue
 		}
 		linted[root] = true
+
 		report, err := Lint([]string{root})
 		if err != nil {
-			continue
+			// Never swallow this. Widening the lint from the note's directory to
+			// the whole home also widened what can make it fail: one unreadable
+			// entry anywhere under the home used to disarm the guard for every
+			// note beneath it, silently returning 0. Post-write is the ONLY check
+			// covering a writer that PreToolUse cannot see (a Bash heredoc), so a
+			// silent pass there is a secret shipped.
+			//
+			// Fall back to the note's own directory, which is what this scope was
+			// before, and if even that fails say so instead of allowing the write.
+			report, err = Lint([]string{filepath.Dir(path)})
+			if err != nil {
+				messages = append(messages, fmt.Sprintf("could not validate %s: %v", path, err))
+				continue
+			}
 		}
+
 		for _, f := range report.Findings {
 			if f.Severity != SeverityError {
 				continue
 			}
 			for _, target := range targets {
+				// MEMORY.md is skipped above as a note; it must be skipped as a
+				// match too, or a payload touching an index alongside a note is
+				// refused over index defects that were already there.
+				if filepath.Base(target) == "MEMORY.md" {
+					continue
+				}
 				if sameFile(f.Path, target) {
 					messages = append(messages, formatFinding(f))
 				}
