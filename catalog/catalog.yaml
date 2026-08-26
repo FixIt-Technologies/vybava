@@ -13,6 +13,12 @@ items:
     description: Freeze variable webfonts at the axis positions a site renders and subset them per language, via fonttools.
     applet: fontfreeze
 
+  - id: claude-sweep
+    kind: applet
+    status: experimental
+    description: Audit and reap stale Claude Code swarm tmux servers that keep re-billing idle agent contexts; dry-run by default, --kill to reap, optional daily launchd schedule.
+    applet: claude-sweep
+
   - id: prm
     kind: skill
     status: experimental
@@ -44,6 +50,7 @@ groups:
       - prc
       - merge
       - fontfreeze
+      - claude-sweep
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -57,6 +64,7 @@ groups:
     items:
       - memorylint
       - fontfreeze
+      - claude-sweep
       - prm
       - prc
       - merge

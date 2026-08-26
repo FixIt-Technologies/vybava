@@ -30,7 +30,7 @@ func TestResolveCombinesAndDeduplicatesSelectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if got, want := len(items), 5; got != want {
+	if got, want := len(items), 6; got != want {
 		t.Fatalf("Resolve() item count = %d, want %d", got, want)
 	}
 }

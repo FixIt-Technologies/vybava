@@ -135,6 +135,28 @@ ignore:
   - archive/**
 ```
 
+## Claude-sweep
+
+Claude Code agent-team "swarms" run as tmux servers with sockets named
+`claude-swarm-<pid>` under the per-user tmux directory. Finished teammates
+never self-terminate, so stale swarms accumulate and re-bill their full
+context whenever something wakes them. `claude-sweep` audits them and,
+opt-in, reaps them:
+
+```sh
+claude-sweep                       # dry-run audit: ACTIVE / IDLE-REAPABLE / DEAD-SOCKET
+claude-sweep --age 3d --orphans    # custom threshold + orphaned claude --agent-id report
+claude-sweep --kill                # remove dead sockets, kill fully idle swarms
+claude-sweep --install-launchd     # daily 06:00 sweep via launchd (--uninstall-launchd undoes)
+```
+
+A pane is idle when the transcript its process tree holds open under
+`~/.claude/projects/` has not been written for `--age` (fallback: an idle
+prompt on screen and a session older than the threshold); a swarm is reapable
+only when every pane is idle. Anything not matching `claude-swarm-*` — the
+default tmux socket included — is never touched. `--json` emits the stable
+report.
+
 ## Extending Výbava
 
 See [`docs/decisions/0001-modular-catalog.md`](docs/decisions/0001-modular-catalog.md).
