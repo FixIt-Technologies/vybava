@@ -11,7 +11,7 @@ import (
 type StageResult struct {
 	Stage       StagePlan `json:"stage"`
 	Concurrency int       `json:"concurrency"`
-	Failed      bool      `json:"failed"` // the target failed here: a generator exited non-zero or the stage deadline hit
+	Failed      bool      `json:"failed"`            // the target failed here: a generator exited non-zero or the stage deadline hit
 	Aborted     bool      `json:"aborted,omitempty"` // the guard (or operator) killed this stage — NOT a target failure
 	Reason      string    `json:"reason,omitempty"`
 	// Latencies are per-generator observed p95 in milliseconds, as reported by
