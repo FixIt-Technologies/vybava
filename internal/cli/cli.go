@@ -12,6 +12,7 @@ import (
 
 	assets "github.com/FixIt-Technologies/vybava"
 	"github.com/FixIt-Technologies/vybava/internal/catalog"
+	"github.com/FixIt-Technologies/vybava/internal/claudesweep"
 	"github.com/FixIt-Technologies/vybava/internal/doctor"
 	"github.com/FixIt-Technologies/vybava/internal/fontfreeze"
 	"github.com/FixIt-Technologies/vybava/internal/installer"
@@ -71,6 +72,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "fontfreeze" {
 		return rt.fontfreezeApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "claude-sweep" {
+		return rt.claudeSweepApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -90,6 +94,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.doctorCommand(),
 		rt.memoryCommand(),
 		rt.fontfreezeCommand("fontfreeze [fonts.yaml]"),
+		rt.claudeSweepCommand("claude-sweep"),
 		rt.browseCommand(),
 	)
 	return root, nil
@@ -506,6 +511,72 @@ func (rt *runtime) fontfreezeCommand(use string) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&dryRun, "dry-run", false, "print planned fonttools work without executing")
+	return command
+}
+
+func (rt *runtime) claudeSweepApplet() *cobra.Command {
+	command := rt.claudeSweepCommand("claude-sweep")
+	command.SilenceUsage = true
+	command.SilenceErrors = true
+	command.SetOut(rt.stdout)
+	command.SetErr(rt.stderr)
+	command.PersistentFlags().BoolVar(&rt.json, "json", false, "emit stable JSON output")
+	return command
+}
+
+func (rt *runtime) claudeSweepCommand(use string) *cobra.Command {
+	var age string
+	var kill, orphans, installLaunchd, uninstallLaunchd bool
+	command := &cobra.Command{
+		Use:   use,
+		Short: "Audit and reap stale Claude Code swarm tmux servers",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if installLaunchd && uninstallLaunchd {
+				return errors.New("--install-launchd and --uninstall-launchd are mutually exclusive")
+			}
+			if installLaunchd || uninstallLaunchd {
+				var plistPath string
+				var err error
+				if installLaunchd {
+					plistPath, err = claudesweep.InstallLaunchd(claudesweep.ExecRunner, age)
+				} else {
+					plistPath, err = claudesweep.UninstallLaunchd(claudesweep.ExecRunner)
+				}
+				if err != nil {
+					return err
+				}
+				if rt.json {
+					return writeJSON(rt.stdout, map[string]any{"plist": plistPath, "installed": installLaunchd})
+				}
+				verb := "installed"
+				if uninstallLaunchd {
+					verb = "removed"
+				}
+				_, err = fmt.Fprintf(rt.stdout, "%s LaunchAgent %s\n", verb, plistPath)
+				return err
+			}
+			threshold, err := claudesweep.ParseAge(age)
+			if err != nil {
+				return err
+			}
+			sweeper := claudesweep.Sweeper{Run: claudesweep.ExecRunner, Age: threshold}
+			report, err := sweeper.Sweep(kill, orphans)
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, report)
+			}
+			_, err = fmt.Fprint(rt.stdout, claudesweep.FormatText(report))
+			return err
+		},
+	}
+	command.Flags().StringVar(&age, "age", "24h", "idle threshold before a swarm is reapable (e.g. 24h, 3d)")
+	command.Flags().BoolVar(&kill, "kill", false, "kill idle-reapable swarms and remove dead sockets (default is a dry-run audit)")
+	command.Flags().BoolVar(&orphans, "orphans", false, "also report orphaned claude --agent-id processes (report-only)")
+	command.Flags().BoolVar(&installLaunchd, "install-launchd", false, "install a LaunchAgent running --kill daily at 06:00")
+	command.Flags().BoolVar(&uninstallLaunchd, "uninstall-launchd", false, "unload and remove the LaunchAgent")
 	return command
 }
 
