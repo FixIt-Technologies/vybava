@@ -16,6 +16,7 @@ import (
 	"github.com/FixIt-Technologies/vybava/internal/fontfreeze"
 	"github.com/FixIt-Technologies/vybava/internal/installer"
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
+	"github.com/FixIt-Technologies/vybava/internal/perfrig"
 	"github.com/FixIt-Technologies/vybava/internal/state"
 	"github.com/FixIt-Technologies/vybava/internal/ui"
 	"github.com/spf13/cobra"
@@ -71,6 +72,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "fontfreeze" {
 		return rt.fontfreezeApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "perfrig" {
+		return rt.perfrigCommand("perfrig"), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -90,6 +94,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.doctorCommand(),
 		rt.memoryCommand(),
 		rt.fontfreezeCommand("fontfreeze [fonts.yaml]"),
+		rt.perfrigCommand("perfrig"),
 		rt.browseCommand(),
 	)
 	return root, nil
@@ -559,6 +564,91 @@ func (rt *runtime) memoryLintCommand(use string) *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&failOn, "fail-on", "warning", "minimum finding severity that produces a non-zero exit (warning, error, never)")
+	return command
+}
+
+// perfrigCommand wires the reusable performance-drill orchestrator. Domain
+// logic lives in internal/perfrig; this is thin CLI glue per the architecture
+// laws. Subcommands: validate, plan (dry look, runs nothing), run.
+func (rt *runtime) perfrigCommand(use string) *cobra.Command {
+	command := &cobra.Command{
+		Use:   use,
+		Short: "Run a performance drill from a testing/<project>/perf manifest",
+		Long: "perfrig orchestrates the generic, safety-critical half of a load test — the neighbor guard,\n" +
+			"the staged ramp (push-to-first-failure), and the percentile-vs-concurrency report — while each\n" +
+			"project supplies its own seed/auth/generator commands via a perf.manifest.yml.",
+	}
+
+	validate := &cobra.Command{
+		Use:   "validate <manifest>",
+		Short: "Parse and validate a perf manifest",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			m, err := perfrig.LoadManifest(args[0])
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, m)
+			}
+			fmt.Fprintf(rt.stdout, "ok: %s (mode=%s, %d generator(s), %d stage(s))\n",
+				m.Project, m.Mode, len(m.Generators), len(m.Ramp.Stages))
+			return nil
+		},
+	}
+
+	plan := &cobra.Command{
+		Use:   "plan <manifest>",
+		Short: "Print the resolved drill (stages + commands) without running anything",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			m, err := perfrig.LoadManifest(args[0])
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(rt.stdout, perfrig.Runner{M: m}.Plan())
+			return nil
+		},
+	}
+
+	var maxStage int
+	var reportOut string
+	run := &cobra.Command{
+		Use:   "run <manifest>",
+		Short: "Execute the drill: seed → (rig up) → guarded ramp → report",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			m, err := perfrig.LoadManifest(args[0])
+			if err != nil {
+				return err
+			}
+			runner := perfrig.Runner{M: m, Opt: perfrig.Options{
+				Stdout:   rt.stdout,
+				Stderr:   rt.stderr,
+				MaxStage: maxStage,
+			}}
+			drill, err := runner.Run(cmd.Context())
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, drill)
+			}
+			report := drill.Markdown()
+			fmt.Fprint(rt.stdout, "\n"+report)
+			if reportOut != "" {
+				if werr := os.WriteFile(reportOut, []byte(report), 0o644); werr != nil {
+					return werr
+				}
+				fmt.Fprintf(rt.stderr, "report written to %s\n", reportOut)
+			}
+			return nil
+		},
+	}
+	run.Flags().IntVar(&maxStage, "max-stage", 0, "stop after this stage index (0 = whole ramp); use for calibration")
+	run.Flags().StringVar(&reportOut, "report-out", "", "also write the markdown report to this path")
+
+	command.AddCommand(validate, plan, run)
 	return command
 }
 
