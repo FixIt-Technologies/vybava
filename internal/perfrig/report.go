@@ -11,7 +11,8 @@ import (
 type StageResult struct {
 	Stage       StagePlan `json:"stage"`
 	Concurrency int       `json:"concurrency"`
-	Failed      bool      `json:"failed"` // a generator exited non-zero or the guard aborted here
+	Failed      bool      `json:"failed"` // the target failed here: a generator exited non-zero or the stage deadline hit
+	Aborted     bool      `json:"aborted,omitempty"` // the guard (or operator) killed this stage — NOT a target failure
 	Reason      string    `json:"reason,omitempty"`
 	// Latencies are per-generator observed p95 in milliseconds, as reported by
 	// the generator on stdout (a "p95_ms=<n>" line) — perfrig stays agnostic to
@@ -83,9 +84,12 @@ func (d Drill) Markdown() string {
 				b.WriteString("– | ")
 			}
 		}
-		if s.Failed {
+		switch {
+		case s.Failed:
 			fmt.Fprintf(&b, "**FAIL: %s** |\n", s.Reason)
-		} else {
+		case s.Aborted:
+			b.WriteString("guard abort |\n")
+		default:
 			b.WriteString("ok |\n")
 		}
 	}
@@ -94,11 +98,15 @@ func (d Drill) Markdown() string {
 	if ff := d.FirstFailure(); ff != nil {
 		fmt.Fprintf(&b, "**First failure at concurrency %d** (%s): %s\n",
 			ff.Concurrency, ff.Stage.Label(), ff.Reason)
-	} else if d.Aborted {
-		fmt.Fprintf(&b, "**Aborted by guard**: %s\n", d.AbortNote)
-	} else {
+	}
+	switch {
+	case d.Aborted:
+		fmt.Fprintf(&b, "**Aborted**: %s — the ramp was cut short; this is NOT the target's ceiling.\n", d.AbortNote)
+	case d.FirstFailure() == nil && len(d.Stages) > 0:
 		fmt.Fprintf(&b, "**No failure** through the top of the ramp (concurrency %d).\n",
 			d.Stages[len(d.Stages)-1].Concurrency)
+	case len(d.Stages) == 0:
+		b.WriteString("**No stages ran.**\n")
 	}
 	return b.String()
 }

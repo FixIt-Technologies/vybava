@@ -1,7 +1,14 @@
 package perfrig
 
 import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -143,9 +150,163 @@ func TestDrillReportFirstFailure(t *testing.T) {
 func TestRunnerPlanNoExec(t *testing.T) {
 	r := Runner{M: validIsolatedManifest()}
 	plan := r.Plan()
-	for _, want := range []string{"drill: fixit", "stage 0", "generator \"http\"", "VUS=<count>"} {
+	for _, want := range []string{"drill: fixit", "stage 0", "generator \"http\"", "VUS=<count>", "PERFRIG_HOLD_S=60"} {
 		if !strings.Contains(plan, want) {
 			t.Errorf("plan missing %q\n%s", want, plan)
 		}
+	}
+}
+
+// runnable returns an isolated-rig manifest whose stack is a no-op and whose
+// reachable check is disabled, so Run exercises only the ramp machinery.
+func runnable(generators []Generator, stages []map[string]int) Manifest {
+	m := Manifest{
+		Schema:     1,
+		Project:    "test",
+		Mode:       ModeIsolatedRig,
+		Target:     Target{Entry: "http://127.0.0.1:1"},
+		Stack:      &Stack{Dir: ".", Up: "true", Down: "true"},
+		Generators: generators,
+		Ramp:       Ramp{Stages: stages, StopOnFirstFailure: true},
+	}
+	m.applyDefaults()
+	return m
+}
+
+func runIt(t *testing.T, m Manifest, opt Options) Drill {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	if opt.Stdout == nil {
+		opt.Stdout = &out
+	}
+	if opt.Stderr == nil {
+		opt.Stderr = &errOut
+	}
+	d, err := (Runner{M: m, Opt: opt}).Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errOut.String())
+	}
+	return d
+}
+
+func TestRunStageGeneratorsRunConcurrently(t *testing.T) {
+	m := runnable([]Generator{
+		{ID: "a", Cmd: "echo p95_ms=1; sleep 0.5", ScaleEnv: "A"},
+		{ID: "b", Cmd: "echo p95_ms=2; sleep 0.5", ScaleEnv: "B"},
+	}, []map[string]int{{"a": 1, "b": 1}})
+	start := time.Now()
+	d := runIt(t, m, Options{})
+	elapsed := time.Since(start)
+	// Sequential execution would take >=1.0s; concurrent ~0.5s.
+	if elapsed >= 900*time.Millisecond {
+		t.Fatalf("stage took %s — generators did not run concurrently", elapsed)
+	}
+	if len(d.Stages) != 1 || d.Stages[0].P95Ms["a"] != 1 || d.Stages[0].P95Ms["b"] != 2 {
+		t.Fatalf("markers not collected from both generators: %+v", d.Stages)
+	}
+}
+
+func TestRunPassesScaleHoldAndManifestEnv(t *testing.T) {
+	m := runnable([]Generator{{
+		ID:       "g",
+		Cmd:      `[ "$PERF_BOARD" = boardx ] && echo p95_ms=$VUS error_rate=$PERFRIG_HOLD_S`,
+		ScaleEnv: "VUS",
+	}}, []map[string]int{{"g": 7}})
+	m.Env = map[string]string{"PERF_BOARD": "boardx"}
+	d := runIt(t, m, Options{})
+	s := d.Stages[0]
+	if s.Failed {
+		t.Fatalf("stage failed — PERF_BOARD from manifest env not visible: %+v", s)
+	}
+	if s.P95Ms["g"] != 7 {
+		t.Fatalf("scale env not passed: p95=%v", s.P95Ms["g"])
+	}
+	if s.ErrorRate["g"] != 60 {
+		t.Fatalf("PERFRIG_HOLD_S not passed: %v", s.ErrorRate["g"])
+	}
+}
+
+func TestGuardAbortMidStageIsNotAFailure(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(200) // healthy while the stage launches
+			return
+		}
+		w.WriteHeader(503)
+	}))
+	defer srv.Close()
+	m := runnable([]Generator{{ID: "g", Cmd: "sleep 30", ScaleEnv: "N"}},
+		[]map[string]int{{"g": 1}})
+	m.Guard = &Guard{Name: "neighbor", Probe: srv.URL, IntervalS: 1, ExpectCode: 200, Breaches: 1}
+	start := time.Now()
+	d := runIt(t, m, Options{})
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Fatalf("guard abort did not kill the generator (took %s)", elapsed)
+	}
+	if !d.Aborted || d.AbortNote == "" {
+		t.Fatalf("drill not marked aborted: %+v", d)
+	}
+	if d.FirstFailure() != nil {
+		t.Fatalf("guard abort misattributed as target failure: %+v", d.FirstFailure())
+	}
+	if len(d.Stages) != 1 || !d.Stages[0].Aborted || d.Stages[0].Failed {
+		t.Fatalf("stage attribution wrong: %+v", d.Stages)
+	}
+	md := d.Markdown()
+	for _, want := range []string{"guard abort", "NOT the target's ceiling"} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report missing %q\n%s", want, md)
+		}
+	}
+}
+
+func TestRunReachableCheckRefusesDeadTarget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(404)
+	}))
+	defer srv.Close()
+	m := runnable([]Generator{{ID: "g", Cmd: "true", ScaleEnv: "N"}}, []map[string]int{{"g": 1}})
+	m.Target = Target{Entry: srv.URL, ReachableCheck: "/health"}
+	var out bytes.Buffer
+	_, err := (Runner{M: m, Opt: Options{Stdout: &out, Stderr: &out}}).Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not reachable") {
+		t.Fatalf("expected reachable-check refusal, got %v", err)
+	}
+}
+
+func TestRunMaxStageRunsOnlyFirstN(t *testing.T) {
+	m := runnable([]Generator{{ID: "g", Cmd: "echo p95_ms=1", ScaleEnv: "N"}},
+		[]map[string]int{{"g": 1}, {"g": 2}})
+	d := runIt(t, m, Options{MaxStage: 1})
+	if len(d.Stages) != 1 {
+		t.Fatalf("--max-stage 1 must run exactly the first stage, ran %d", len(d.Stages))
+	}
+}
+
+func TestMarkdownEmptyStagesDoesNotPanic(t *testing.T) {
+	d := Drill{Project: "x", Mode: ModeProdDirect, Target: "http://x", StartedAt: time.Unix(0, 0).UTC()}
+	if md := d.Markdown(); !strings.Contains(md, "No stages ran") {
+		t.Fatalf("empty drill report wrong:\n%s", md)
+	}
+}
+
+func TestLoadManifestRejectsUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "perf.manifest.yml")
+	manifest := `schema: 1
+project: p
+mode: prod-direct
+target: { entry: "https://x" }
+guard: { name: n, probe: "https://x/h" }
+generators: [{ id: g, cmd: "true", scale_env: N }]
+ramp: { stages: [{ g: 1 }] }
+metrics: { host: h }
+`
+	if err := os.WriteFile(path, []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadManifest(path)
+	if err == nil || !strings.Contains(err.Error(), "metrics") {
+		t.Fatalf("unknown field must be rejected, got %v", err)
 	}
 }

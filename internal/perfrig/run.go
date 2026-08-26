@@ -3,13 +3,18 @@ package perfrig
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 )
 
@@ -17,8 +22,7 @@ import (
 type Options struct {
 	Stdout    io.Writer
 	Stderr    io.Writer
-	DryRun    bool   // print the plan (stages + commands), run nothing
-	MaxStage  int    // stop after this stage index (<=0 = whole ramp); for calibration
+	MaxStage  int    // run only the first N stages (<=0 = whole ramp); for calibration
 	ShellPath string // shell to invoke commands with (default "/bin/bash")
 }
 
@@ -32,6 +36,10 @@ var (
 type Runner struct {
 	M   Manifest
 	Opt Options
+
+	// outMu serializes writes from concurrently running generators so their
+	// interleaved output stays line-atomic. Set by Run.
+	outMu *sync.Mutex
 }
 
 func (r Runner) out() io.Writer {
@@ -39,6 +47,13 @@ func (r Runner) out() io.Writer {
 		return r.Opt.Stdout
 	}
 	return os.Stdout
+}
+
+func (r Runner) errOut() io.Writer {
+	if r.Opt.Stderr != nil {
+		return r.Opt.Stderr
+	}
+	return os.Stderr
 }
 
 func (r Runner) shell() string {
@@ -52,6 +67,38 @@ func (r Runner) sub(cmd string) string {
 	return strings.ReplaceAll(cmd, entrySub, r.M.Target.Entry)
 }
 
+// printLine writes one generator/step output line, prefixed with its label
+// when several generators run concurrently.
+func (r Runner) printLine(label, line string) {
+	if r.outMu != nil {
+		r.outMu.Lock()
+		defer r.outMu.Unlock()
+	}
+	if label != "" {
+		fmt.Fprintf(r.out(), "[%s] %s\n", label, line)
+	} else {
+		fmt.Fprintln(r.out(), line)
+	}
+}
+
+// manifestEnv renders the manifest-level env map as KEY=VALUE pairs in a
+// stable order.
+func (r Runner) manifestEnv() []string {
+	if len(r.M.Env) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(r.M.Env))
+	for k := range r.M.Env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
+	for _, k := range keys {
+		env = append(env, fmt.Sprintf("%s=%s", k, r.M.Env[k]))
+	}
+	return env
+}
+
 // Plan prints what the drill WOULD do — every resolved stage and the exact
 // commands — without running anything. This is the safe first look, especially
 // for a prod-direct drill.
@@ -63,33 +110,76 @@ func (r Runner) Plan() string {
 	} else {
 		b.WriteString("  guard: none\n")
 	}
+	if rc := r.M.Target.ReachableCheck; rc != "" {
+		fmt.Fprintf(&b, "  reachable check: GET %s\n", r.reachableURL())
+	}
 	if r.M.Seed != nil {
 		fmt.Fprintf(&b, "  seed: %s\n", r.sub(r.M.Seed.Cmd))
 	}
 	if r.M.Auth != nil {
 		fmt.Fprintf(&b, "  auth: %s\n", r.sub(r.M.Auth.Cmd))
 	}
+	for _, e := range r.manifestEnv() {
+		fmt.Fprintf(&b, "  env: %s\n", e)
+	}
 	for _, s := range PlanRamp(r.M) {
-		fmt.Fprintf(&b, "  stage %d (concurrency %d): %s, hold %ds\n",
-			s.Index, s.Total(), s.Label(), r.M.Ramp.HoldS)
+		fmt.Fprintf(&b, "  stage %d (concurrency %d): %s, hold %ds (deadline %s)\n",
+			s.Index, s.Total(), s.Label(), r.M.Ramp.HoldS, r.M.StageDeadline())
 	}
 	for _, g := range r.M.Generators {
-		fmt.Fprintf(&b, "  generator %q: %s=<count> %s\n", g.ID, g.ScaleEnv, r.sub(g.Cmd))
+		fmt.Fprintf(&b, "  generator %q: %s=<count> PERFRIG_HOLD_S=%d %s\n",
+			g.ID, g.ScaleEnv, r.M.Ramp.HoldS, r.sub(g.Cmd))
 	}
 	return b.String()
 }
 
-// Run executes the full drill: seed → (rig up) → staged ramp under the guard →
-// teardown, returning the Drill record for the report. It stops at the first
-// failed stage when StopOnFirstFailure is set, and always stops if the guard
-// aborts (the neighbor is more important than finishing the ramp).
+func (r Runner) reachableURL() string {
+	rc := r.M.Target.ReachableCheck
+	if !strings.HasPrefix(rc, "/") {
+		rc = "/" + rc
+	}
+	return strings.TrimRight(r.M.Target.Entry, "/") + rc
+}
+
+// checkReachable refuses to start the ramp against a target that isn't
+// answering — a down target would render every stage as a bogus "failure".
+func (r Runner) checkReachable(ctx context.Context) error {
+	url := r.reachableURL()
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("reachable check: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("target not reachable (%s): %w", url, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("target not reachable (%s): status %d", url, resp.StatusCode)
+	}
+	fmt.Fprintf(r.out(), "target reachable: GET %s -> %d\n", url, resp.StatusCode)
+	return nil
+}
+
+// genResult is one generator's outcome within a stage.
+type genResult struct {
+	id   string
+	sink stageSink
+	err  error
+}
+
+// Run executes the full drill: seed → (rig up) → reachable check → guarded
+// ramp → teardown, returning the Drill record for the report. All generators
+// of a stage run CONCURRENTLY (the whole point of combined load); the stage
+// ends when every generator exits. The drill stops at the first failed stage
+// when StopOnFirstFailure is set, and always stops if the guard aborts (the
+// neighbor is more important than finishing the ramp).
 func (r Runner) Run(ctx context.Context) (Drill, error) {
 	d := Drill{Project: r.M.Project, Mode: r.M.Mode, Target: r.M.Target.Entry, StartedAt: time.Now()}
-
-	if r.Opt.DryRun {
-		fmt.Fprint(r.out(), r.Plan())
-		return d, nil
-	}
+	r.outMu = &sync.Mutex{}
 
 	// Arm the neighbor guard first, before any load exists.
 	var abortReason string
@@ -109,28 +199,33 @@ func (r Runner) Run(ctx context.Context) (Drill, error) {
 
 	if r.M.Seed != nil {
 		fmt.Fprintln(r.out(), "== seed ==")
-		if err := r.exec(ctx, r.M.Seed.Cmd, r.M.Seed.Dir, nil); err != nil {
+		if err := r.exec(ctx, r.M.Seed.Cmd, r.M.Seed.Dir, nil, ""); err != nil {
 			return d, fmt.Errorf("seed: %w", err)
 		}
 	}
 	if r.M.Mode == ModeIsolatedRig && r.M.Stack != nil {
 		fmt.Fprintln(r.out(), "== rig up ==")
-		if err := r.exec(ctx, r.M.Stack.Up, r.M.Stack.Dir, nil); err != nil {
+		if err := r.exec(ctx, r.M.Stack.Up, r.M.Stack.Dir, nil, ""); err != nil {
 			return d, fmt.Errorf("stack up: %w", err)
 		}
 		defer func() {
 			fmt.Fprintln(r.out(), "== rig down ==")
-			_ = r.exec(context.Background(), r.M.Stack.Down, r.M.Stack.Dir, nil)
+			_ = r.exec(context.Background(), r.M.Stack.Down, r.M.Stack.Dir, nil, "")
 		}()
 		if r.M.Stack.Ready != "" {
-			if err := r.exec(ctx, r.M.Stack.Ready, r.M.Stack.Dir, nil); err != nil {
+			if err := r.exec(ctx, r.M.Stack.Ready, r.M.Stack.Dir, nil, ""); err != nil {
 				return d, fmt.Errorf("rig never became ready: %w", err)
 			}
 		}
 	}
+	if r.M.Target.ReachableCheck != "" {
+		if err := r.checkReachable(ctx); err != nil {
+			return d, err
+		}
+	}
 	if r.M.Auth != nil {
 		fmt.Fprintln(r.out(), "== auth ==")
-		if err := r.exec(ctx, r.M.Auth.Cmd, r.M.Auth.Dir, nil); err != nil {
+		if err := r.exec(ctx, r.M.Auth.Cmd, r.M.Auth.Dir, nil, ""); err != nil {
 			return d, fmt.Errorf("auth: %w", err)
 		}
 	}
@@ -145,45 +240,89 @@ func (r Runner) Run(ctx context.Context) (Drill, error) {
 			break
 		}
 		if guardCtx.Err() != nil {
-			d.Aborted = true
-			d.AbortNote = abortReason
 			break
 		}
 		res := StageResult{Stage: stage, Concurrency: stage.Total(),
 			P95Ms: map[string]float64{}, ErrorRate: map[string]float64{}}
-		fmt.Fprintf(r.out(), "== stage %d: %s (concurrency %d) ==\n", stage.Index, stage.Label(), stage.Total())
+		fmt.Fprintf(r.out(), "== stage %d: %s (concurrency %d, hold %ds) ==\n",
+			stage.Index, stage.Label(), stage.Total(), r.M.Ramp.HoldS)
 
+		// Every generator of the stage launches together; the hard deadline
+		// keeps a hung generator from wedging the drill.
+		stageCtx, cancelStage := context.WithTimeout(guardCtx, r.M.StageDeadline())
+		var wg sync.WaitGroup
+		resCh := make(chan genResult, len(stage.Counts))
 		for id, count := range stage.Counts {
 			if count <= 0 {
 				continue
 			}
 			g := genByID[id]
-			env := []string{fmt.Sprintf("%s=%d", g.ScaleEnv, count)}
-			var sink stageSink
-			err := r.exec(guardCtx, g.Cmd, g.Dir, &sink, env...)
-			if sink.hasP95 {
-				res.P95Ms[id] = sink.p95
+			wg.Add(1)
+			go func(g Generator, count int) {
+				defer wg.Done()
+				env := []string{
+					fmt.Sprintf("%s=%d", g.ScaleEnv, count),
+					fmt.Sprintf("PERFRIG_HOLD_S=%d", r.M.Ramp.HoldS),
+				}
+				var sink stageSink
+				err := r.exec(stageCtx, g.Cmd, g.Dir, &sink, g.ID, env...)
+				resCh <- genResult{id: g.ID, sink: sink, err: err}
+			}(g, count)
+		}
+		wg.Wait()
+		close(resCh)
+		deadlineHit := errors.Is(stageCtx.Err(), context.DeadlineExceeded)
+		cancelStage()
+
+		results := make([]genResult, 0, len(stage.Counts))
+		for gr := range resCh {
+			results = append(results, gr)
+		}
+		sort.Slice(results, func(i, j int) bool { return results[i].id < results[j].id })
+		for _, gr := range results {
+			if gr.sink.hasP95 {
+				res.P95Ms[gr.id] = gr.sink.p95
 			}
-			if sink.hasErr {
-				res.ErrorRate[id] = sink.errRate
+			if gr.sink.hasErr {
+				res.ErrorRate[gr.id] = gr.sink.errRate
 			}
-			if err != nil {
+			if gr.err == nil {
+				continue
+			}
+			switch {
+			case guardCtx.Err() != nil:
+				// The guard (or the operator) pulled the plug mid-stage; the
+				// generator dying from that kill is not the target's failure.
+				res.Aborted = true
+			case deadlineHit:
 				res.Failed = true
-				if guardCtx.Err() != nil {
-					res.Reason = abortReason
-				} else {
-					res.Reason = fmt.Sprintf("generator %q exited: %v", id, err)
+				res.Reason = fmt.Sprintf("stage deadline %s exceeded (hung generator killed)", r.M.StageDeadline())
+			default:
+				res.Failed = true
+				if res.Reason == "" {
+					res.Reason = fmt.Sprintf("generator %q exited: %v", gr.id, gr.err)
 				}
 			}
 		}
+		if res.Aborted {
+			res.Failed = false
+			res.Reason = ""
+		}
 		d.Stages = append(d.Stages, res)
+		// Guard abort beats first-failure attribution: check it first.
+		if guardCtx.Err() != nil {
+			break
+		}
 		if res.Failed && r.M.Ramp.StopOnFirstFailure {
 			break
 		}
-		if guardCtx.Err() != nil {
-			d.Aborted = true
-			d.AbortNote = abortReason
-			break
+	}
+
+	if guardCtx.Err() != nil {
+		d.Aborted = true
+		d.AbortNote = abortReason
+		if d.AbortNote == "" {
+			d.AbortNote = "run cancelled (interrupt)"
 		}
 	}
 	return d, nil
@@ -198,20 +337,34 @@ type stageSink struct {
 	hasErr  bool
 }
 
-// exec runs a shell command, streaming output; if sink is non-nil it also
-// scrapes the perf markers. extraEnv is appended to the process environment.
-func (r Runner) exec(ctx context.Context, cmd, dir string, sink *stageSink, extraEnv ...string) error {
+// exec runs a shell command, streaming output (prefixed with label when
+// non-empty); if sink is non-nil it also scrapes the perf markers. extraEnv
+// is appended after the manifest env and the process environment.
+//
+// The command runs in its own process group; on ctx cancel the WHOLE group
+// gets SIGTERM (a plain kill of the shell would orphan its children and leave
+// the load running after a guard abort), with a bounded WaitDelay so an
+// ignoring process can't wedge us.
+func (r Runner) exec(ctx context.Context, cmd, dir string, sink *stageSink, label string, extraEnv ...string) error {
 	cmd = r.sub(cmd)
 	c := exec.CommandContext(ctx, r.shell(), "-c", cmd)
 	if dir != "" {
 		c.Dir = dir
 	}
-	c.Env = append(os.Environ(), extraEnv...)
+	c.Env = append(append(os.Environ(), r.manifestEnv()...), extraEnv...)
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error {
+		if c.Process != nil {
+			return syscall.Kill(-c.Process.Pid, syscall.SIGTERM)
+		}
+		return nil
+	}
+	c.WaitDelay = 10 * time.Second
 	stdout, err := c.StdoutPipe()
 	if err != nil {
 		return err
 	}
-	c.Stderr = r.out()
+	c.Stderr = &lockedWriter{mu: r.outMu, w: r.errOut()}
 	if err := c.Start(); err != nil {
 		return err
 	}
@@ -219,7 +372,6 @@ func (r Runner) exec(ctx context.Context, cmd, dir string, sink *stageSink, extr
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := scanner.Text()
-		fmt.Fprintln(r.out(), line)
 		if sink != nil {
 			if mm := p95Re.FindStringSubmatch(line); mm != nil {
 				if v, e := strconv.ParseFloat(mm[1], 64); e == nil {
@@ -232,6 +384,27 @@ func (r Runner) exec(ctx context.Context, cmd, dir string, sink *stageSink, extr
 				}
 			}
 		}
+		r.printLine(label, line)
+	}
+	if serr := scanner.Err(); serr != nil {
+		// Keep draining so the child never blocks on a full pipe, but tell
+		// the operator markers may have been missed.
+		fmt.Fprintf(r.errOut(), "perfrig: stdout scan aborted (%v); draining raw\n", serr)
+		_, _ = io.Copy(io.Discard, stdout)
 	}
 	return c.Wait()
+}
+
+// lockedWriter serializes writes from concurrent generators onto one stream.
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	if l.mu != nil {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+	}
+	return l.w.Write(p)
 }

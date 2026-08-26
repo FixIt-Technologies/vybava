@@ -631,21 +631,41 @@ func (rt *runtime) perfrigCommand(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if rt.json {
-				return writeJSON(rt.stdout, drill)
-			}
 			report := drill.Markdown()
-			fmt.Fprint(rt.stdout, "\n"+report)
+			if rt.json {
+				if jerr := writeJSON(rt.stdout, drill); jerr != nil {
+					return jerr
+				}
+			} else {
+				fmt.Fprint(rt.stdout, "\n"+report)
+			}
+			targets := []string{}
 			if reportOut != "" {
-				if werr := os.WriteFile(reportOut, []byte(report), 0o644); werr != nil {
+				targets = append(targets, reportOut)
+			}
+			// The manifest's report.out is a directory; each run drops a
+			// timestamped artifact there.
+			if m.Report.Out != "" {
+				dir, derr := expandHome(m.Report.Out)
+				if derr != nil {
+					return derr
+				}
+				if derr := os.MkdirAll(dir, 0o755); derr != nil {
+					return derr
+				}
+				targets = append(targets, filepath.Join(dir,
+					fmt.Sprintf("%s-%s.md", m.Project, drill.StartedAt.Format("20060102-150405"))))
+			}
+			for _, t := range targets {
+				if werr := os.WriteFile(t, []byte(report), 0o644); werr != nil {
 					return werr
 				}
-				fmt.Fprintf(rt.stderr, "report written to %s\n", reportOut)
+				fmt.Fprintf(rt.stderr, "report written to %s\n", t)
 			}
 			return nil
 		},
 	}
-	run.Flags().IntVar(&maxStage, "max-stage", 0, "stop after this stage index (0 = whole ramp); use for calibration")
+	run.Flags().IntVar(&maxStage, "max-stage", 0, "run only the first N stages (0 = whole ramp); use for calibration")
 	run.Flags().StringVar(&reportOut, "report-out", "", "also write the markdown report to this path")
 
 	command.AddCommand(validate, plan, run)
@@ -709,6 +729,19 @@ func addInstallFlags(command *cobra.Command, agent, scope, binDir, rootDir *stri
 	command.Flags().StringVar(binDir, "bin-dir", "", "applet destination (default ~/.local/bin)")
 	command.Flags().StringVar(rootDir, "root", "", "project root for project-scoped installs (default current directory)")
 	command.Flags().BoolVar(dryRun, "dry-run", false, "show the installation plan without changing files")
+}
+
+// expandHome resolves a leading "~/" (or bare "~") against the user's home
+// directory so manifest paths like ~/Exports/... land where they promise.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }
 
 func writeJSON(writer io.Writer, value any) error {

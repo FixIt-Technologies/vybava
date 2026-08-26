@@ -13,6 +13,7 @@
 package perfrig
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -36,80 +37,94 @@ const (
 
 // Manifest is the per-project source of truth: one perf.manifest.yml renders a
 // whole drill. Adding a project is this file plus its seed/auth/generator
-// commands — no perfrig code change.
+// commands — no perfrig code change. Parsing is strict: an unknown field is an
+// error, never a silently ignored no-op, so the manifest can be trusted as the
+// contract of what actually runs.
 type Manifest struct {
-	Schema  int    `yaml:"schema"`
-	Project string `yaml:"project"`
-	Mode    Mode   `yaml:"mode"`
+	Schema  int    `yaml:"schema" json:"schema"`
+	Project string `yaml:"project" json:"project"`
+	Mode    Mode   `yaml:"mode" json:"mode"`
 
-	Target     Target      `yaml:"target"`
-	Guard      *Guard      `yaml:"guard,omitempty"`
-	Stack      *Stack      `yaml:"stack,omitempty"`
-	Seed       *Step       `yaml:"seed,omitempty"`
-	Auth       *Step       `yaml:"auth,omitempty"`
-	Generators []Generator `yaml:"generators"`
-	Ramp       Ramp        `yaml:"ramp"`
-	Metrics    *Metrics    `yaml:"metrics,omitempty"`
-	Report     Report      `yaml:"report"`
+	Target     Target            `yaml:"target" json:"target"`
+	Guard      *Guard            `yaml:"guard,omitempty" json:"guard,omitempty"`
+	Stack      *Stack            `yaml:"stack,omitempty" json:"stack,omitempty"`
+	Seed       *Step             `yaml:"seed,omitempty" json:"seed,omitempty"`
+	Auth       *Step             `yaml:"auth,omitempty" json:"auth,omitempty"`
+	Env        map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	Generators []Generator       `yaml:"generators" json:"generators"`
+	Ramp       Ramp              `yaml:"ramp" json:"ramp"`
+	Report     Report            `yaml:"report" json:"report"`
 }
 
 // Target is what generators hit and how perfrig confirms it is live.
 type Target struct {
-	Entry          string `yaml:"entry"`           // base URL generators aim at
-	ReachableCheck string `yaml:"reachable_check"` // path appended to Entry for a liveness probe
+	Entry string `yaml:"entry" json:"entry"` // base URL generators aim at
+	// ReachableCheck is a path appended to Entry; before the ramp starts (and
+	// after an isolated rig is up) perfrig GETs it and refuses to run unless
+	// it answers with a 2xx/3xx.
+	ReachableCheck string `yaml:"reachable_check" json:"reachable_check"`
 }
 
 // Guard is the neighbor canary. In prod-direct mode it protects the OTHER
 // tenants on a shared host (vitrinka's drill guards FixIt-prod, same box); in
 // isolated-rig mode it is optional insurance for disk/IO contention.
 type Guard struct {
-	Name       string `yaml:"name"`
-	Probe      string `yaml:"probe"`        // absolute URL to poll
-	IntervalS  int    `yaml:"interval_s"`   // seconds between probes (default 10)
-	ExpectCode int    `yaml:"expect_code"`  // required HTTP status (default 200)
-	AbortP95Ms int    `yaml:"abort_p95_ms"` // abort if probe latency exceeds this (0 = ignore)
-	Breaches   int    `yaml:"breaches"`     // consecutive breaches before abort (default 2)
+	Name       string `yaml:"name" json:"name"`
+	Probe      string `yaml:"probe" json:"probe"`               // absolute URL to poll
+	IntervalS  int    `yaml:"interval_s" json:"interval_s"`     // seconds between probes (default 10)
+	ExpectCode int    `yaml:"expect_code" json:"expect_code"`   // required HTTP status (default 200)
+	AbortP95Ms int    `yaml:"abort_p95_ms" json:"abort_p95_ms"` // abort if a probe's latency exceeds this (0 = ignore)
+	Breaches   int    `yaml:"breaches" json:"breaches"`         // consecutive breaches before abort (default 2)
 }
 
 // Stack is how perfrig brings an isolated rig up and down (isolated-rig only).
 type Stack struct {
-	Dir   string `yaml:"dir"`   // working dir for the commands (compose project)
-	Up    string `yaml:"up"`    // e.g. "docker compose up -d"
-	Down  string `yaml:"down"`  // e.g. "docker compose down"
-	Ready string `yaml:"ready"` // shell command that exits 0 when the rig serves
+	Dir   string `yaml:"dir" json:"dir"`     // working dir for the commands (compose project)
+	Up    string `yaml:"up" json:"up"`       // e.g. "docker compose up -d"
+	Down  string `yaml:"down" json:"down"`   // e.g. "docker compose down"
+	Ready string `yaml:"ready" json:"ready"` // shell command that exits 0 when the rig serves
 }
 
 // Step is a one-shot shell command (seed / auth). {entry} is substituted.
 type Step struct {
-	Cmd string `yaml:"cmd"`
-	Dir string `yaml:"dir,omitempty"`
+	Cmd string `yaml:"cmd" json:"cmd"`
+	Dir string `yaml:"dir,omitempty" json:"dir,omitempty"`
 }
 
-// Generator is one actor type perfrig scales through the ramp. Cmd is invoked
-// once per stage with ScaleEnv set to that stage's count for this generator.
+// Generator is one actor type perfrig scales through the ramp. All generators
+// named by a stage are launched CONCURRENTLY and the stage lasts until every
+// one of them exits. Each invocation gets ScaleEnv set to the stage's count
+// plus PERFRIG_HOLD_S — the generator is expected to sustain its load for
+// about that many seconds and then exit (k6 duration, actor -duration flag…).
+//
+// Kill caveat: on a guard abort perfrig SIGTERMs the generator's local
+// process group, but a command that tunnels through ssh must arrange for the
+// remote side to die with the connection (ssh -tt, a remote timeout, or a
+// bounded duration) — the client dying does not reliably kill a detached
+// remote process (e.g. a docker container the remote CLI started).
 type Generator struct {
-	ID       string `yaml:"id"`  // e.g. "http", "sockets", "movers"
-	Cmd      string `yaml:"cmd"` // shell command; {entry} substituted
-	Dir      string `yaml:"dir,omitempty"`
-	ScaleEnv string `yaml:"scale_env"` // env var carrying the per-stage count (e.g. VUS)
+	ID       string `yaml:"id" json:"id"`   // e.g. "http", "sockets", "movers"
+	Cmd      string `yaml:"cmd" json:"cmd"` // shell command; {entry} substituted
+	Dir      string `yaml:"dir,omitempty" json:"dir,omitempty"`
+	ScaleEnv string `yaml:"scale_env" json:"scale_env"` // env var carrying the per-stage count (e.g. VUS)
 }
 
 // Ramp is the staged concurrency profile. Each stage maps generator-id -> count.
 type Ramp struct {
-	Stages             []map[string]int `yaml:"stages"`
-	HoldS              int              `yaml:"hold_s"` // seconds to hold each stage (default 60)
-	StopOnFirstFailure bool             `yaml:"stop_on_first_failure"`
+	Stages []map[string]int `yaml:"stages" json:"stages"`
+	// HoldS is how long each stage should sustain load. It is handed to every
+	// generator as PERFRIG_HOLD_S; perfrig additionally enforces a hard stage
+	// deadline of 2×hold+60s after which the stage is killed and marked
+	// failed, so a hung generator can never wedge the drill.
+	HoldS              int  `yaml:"hold_s" json:"hold_s"`
+	StopOnFirstFailure bool `yaml:"stop_on_first_failure" json:"stop_on_first_failure"`
 }
 
-// Metrics points perfrig at host exporters to sample during the ramp.
-type Metrics struct {
-	Host      string   `yaml:"host"`      // ssh alias
-	Exporters []string `yaml:"exporters"` // node|cadvisor|nginx (informational sampling hooks)
-}
-
-// Report controls where the drill artifact lands.
+// Report controls where the drill artifact lands. Out is a directory (~ is
+// expanded); each run writes a timestamped <project>-<start>.md into it, in
+// addition to the report always going to stdout.
 type Report struct {
-	Out string `yaml:"out"` // directory (project-first under ~/Exports by convention)
+	Out string `yaml:"out" json:"out"`
 }
 
 // LoadManifest reads and validates a perf.manifest.yml.
@@ -119,7 +134,9 @@ func LoadManifest(path string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	var m Manifest
-	if err := yaml.Unmarshal(raw, &m); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true)
+	if err := dec.Decode(&m); err != nil {
 		return Manifest{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	m.applyDefaults()
@@ -215,4 +232,11 @@ func (m Manifest) Validate() error {
 // HoldDuration is the per-stage hold as a time.Duration.
 func (m Manifest) HoldDuration() time.Duration {
 	return time.Duration(m.Ramp.HoldS) * time.Second
+}
+
+// StageDeadline is the hard per-stage timeout: generous slack over the hold
+// (generator ramp-up, summary flush) but bounded, so a hung generator fails
+// the stage instead of wedging the drill forever.
+func (m Manifest) StageDeadline() time.Duration {
+	return 2*m.HoldDuration() + 60*time.Second
 }
