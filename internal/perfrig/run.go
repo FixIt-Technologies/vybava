@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -352,13 +351,7 @@ func (r Runner) exec(ctx context.Context, cmd, dir string, sink *stageSink, labe
 		c.Dir = dir
 	}
 	c.Env = append(append(os.Environ(), r.manifestEnv()...), extraEnv...)
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	c.Cancel = func() error {
-		if c.Process != nil {
-			return syscall.Kill(-c.Process.Pid, syscall.SIGTERM)
-		}
-		return nil
-	}
+	setProcGroup(c)
 	c.WaitDelay = 10 * time.Second
 	stdout, err := c.StdoutPipe()
 	if err != nil {
