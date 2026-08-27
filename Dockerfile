@@ -1,6 +1,7 @@
-# luko.to redirector — built from the repo root:
-#   docker build -f deploy/shrt/Dockerfile .
-FROM golang:1.24-alpine AS build
+# luko.to redirector — repo-root Dockerfile: deployik ships the Dockerfile's
+# directory as the build context, so it must sit at the root to see go.mod/go.sum.
+#   docker build .
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
