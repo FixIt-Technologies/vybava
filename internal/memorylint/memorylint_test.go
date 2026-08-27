@@ -3,6 +3,7 @@ package memorylint_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
@@ -62,6 +63,54 @@ Contact qa@fixit.test from 10.0.0.8.
 	}
 	if len(report.Findings) != 0 {
 		t.Fatalf("Lint() findings = %#v, want none", report.Findings)
+	}
+}
+
+func TestLintEnforcesTheProvisionalLifecycle(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	note := func(name, status, expires string) {
+		front := "---\nname: " + name + "\ndescription: Use when testing lifecycle.\ntype: project\nstatus: " + status + "\n"
+		if expires != "" {
+			front += "expires: " + expires + "\n"
+		}
+		write(t, filepath.Join(root, name+".md"), front+"---\n\nBody.\n")
+	}
+	note("project-no-expires", "provisional", "")
+	note("project-bad-expires", "provisional", "someday")
+	note("project-expired", "provisional", "2001-01-02")
+	note("project-promoted", "active", "2999-01-02")
+	note("project-live", "provisional", "2999-01-02")
+	index := "# Memory\n"
+	for _, name := range []string{"project-no-expires", "project-bad-expires", "project-expired", "project-promoted", "project-live"} {
+		index += "- [" + name + "](" + name + ".md) — Use when testing lifecycle.\n"
+	}
+	write(t, filepath.Join(root, "MEMORY.md"), index)
+
+	report, err := memorylint.Lint([]string{root})
+	if err != nil {
+		t.Fatalf("Lint() error = %v", err)
+	}
+	got := map[string]memorylint.Finding{}
+	for _, finding := range report.Findings {
+		got[filepath.Base(finding.Path)] = finding
+	}
+	for _, name := range []string{"project-no-expires.md", "project-bad-expires.md", "project-promoted.md"} {
+		finding, exists := got[name]
+		if !exists || finding.Rule != "M012" || finding.Severity != memorylint.SeverityError {
+			t.Errorf("%s: want an M012 error, got %#v", name, got[name])
+		}
+	}
+	expired, exists := got["project-expired.md"]
+	if !exists || expired.Rule != "M013" || expired.Severity != memorylint.SeverityWarning {
+		t.Errorf("project-expired.md: want an M013 warning, got %#v", expired)
+	}
+	if exists && !strings.Contains(expired.Message, "deletable on sight") {
+		t.Errorf("M013 message must make prune mechanical, got %q", expired.Message)
+	}
+	if finding, exists := got["project-live.md"]; exists {
+		t.Errorf("a live provisional must lint clean, got %#v", finding)
 	}
 }
 

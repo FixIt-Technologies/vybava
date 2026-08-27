@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -67,6 +68,7 @@ type frontmatter struct {
 	Description string `yaml:"description"`
 	Type        string `yaml:"type"`
 	Status      string `yaml:"status"`
+	Expires     string `yaml:"expires"`
 	Metadata    struct {
 		Type string `yaml:"type"`
 	} `yaml:"metadata"`
@@ -247,9 +249,10 @@ func lintRoot(root string, config Config) ([]Finding, int, error) {
 			if !contains(config.AllowedTypes, parsed.Type) {
 				findings = append(findings, finding("M001", SeverityError, path, 1, "type %q is not allowed", parsed.Type))
 			}
-			if parsed.Status != "active" && parsed.Status != "superseded" {
-				findings = append(findings, finding("M001", SeverityError, path, 1, "status must be active or superseded"))
+			if parsed.Status != "active" && parsed.Status != "superseded" && parsed.Status != "provisional" {
+				findings = append(findings, finding("M001", SeverityError, path, 1, "status must be active, provisional or superseded"))
 			}
+			findings = append(findings, lifecycleFindings(path, parsed)...)
 			stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			if parsed.Name != "" && parsed.Name != stem {
 				findings = append(findings, finding("M001", SeverityError, path, 1, "name %q must match filename stem %q", parsed.Name, stem))
@@ -416,6 +419,30 @@ func linkFindings(root string, entries []entry, indexes map[string][]byte) []Fin
 		}
 	}
 	return findings
+}
+
+// lifecycleFindings enforces the provisional lifecycle: a provisional note must
+// carry a well-formed expires date, promotion to any other status drops it, and
+// an expired provisional is deletable on sight — no re-litigation.
+func lifecycleFindings(path string, parsed frontmatter) []Finding {
+	if parsed.Status != "provisional" {
+		if parsed.Expires != "" {
+			return []Finding{finding("M012", SeverityError, path, 1, "expires is only valid on a provisional note; promotion drops it")}
+		}
+		return nil
+	}
+	if parsed.Expires == "" {
+		return []Finding{finding("M012", SeverityError, path, 1, "provisional note must carry expires: YYYY-MM-DD")}
+	}
+	if _, err := time.Parse("2006-01-02", parsed.Expires); err != nil {
+		return []Finding{finding("M012", SeverityError, path, 1, "expires %q is not a YYYY-MM-DD date", parsed.Expires)}
+	}
+	// Zero-padded ISO dates compare correctly as strings, and Format uses local
+	// time — so "today" flips exactly at the user's midnight, not UTC's.
+	if parsed.Expires < time.Now().Format("2006-01-02") {
+		return []Finding{finding("M013", SeverityWarning, path, 1, "expired provisional — deletable on sight (expired %s)", parsed.Expires)}
+	}
+	return nil
 }
 
 func identityFindings(entries []entry) []Finding {
