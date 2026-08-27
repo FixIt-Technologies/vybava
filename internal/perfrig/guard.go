@@ -33,17 +33,24 @@ func (g Guard) Breach(p Probe) bool {
 	return false
 }
 
-// probe performs one HTTP GET against the guard target.
+// probe performs one HTTP GET against the guard target. EVERY return path
+// computes Breaching via Breach — an unreachable canary is a breach, not a
+// healthy neighbor (Watch counts p.Breaching, so missing this here would make
+// the guard blind exactly when the neighbor is down hard).
 func (g Guard) probe(ctx context.Context, client *http.Client) Probe {
 	start := time.Now()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, g.Probe, nil)
 	if err != nil {
-		return Probe{At: start, Err: err.Error()}
+		p := Probe{At: start, Err: err.Error()}
+		p.Breaching = g.Breach(p)
+		return p
 	}
 	resp, err := client.Do(req)
 	lat := time.Since(start)
 	if err != nil {
-		return Probe{At: start, Latency: lat, Err: err.Error()}
+		p := Probe{At: start, Latency: lat, Err: err.Error()}
+		p.Breaching = g.Breach(p)
+		return p
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
