@@ -39,9 +39,9 @@ var aliasByRepo = func() map[string]string {
 	return m
 }()
 
-// reservedSegments are first path segments the server routes statically;
-// minted codes are always 7 base32 chars so they cannot shadow these, but the
-// mint path refuses them anyway out of caution.
+// reservedSegments are first path segments the server routes statically.
+// Store.Mint skips a code that would spell one of these (only "healthz" is
+// even reachable at 7 chars), extending the hash prefix instead.
 var reservedSegments = map[string]bool{
 	"gh": true, "b": true, "api": true, "healthz": true,
 }

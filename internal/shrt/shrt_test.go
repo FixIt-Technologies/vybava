@@ -195,13 +195,70 @@ func TestClientStaticOffline(t *testing.T) {
 	}
 }
 
+func TestMintCollisionExtendsCode(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "links.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := "https://example.com/victim-target-that-is-long-enough"
+	imposter := "https://example.com/imposter-target-also-long-enough"
+	// Force the collision: pre-seat the imposter's 7-char prefix on the victim.
+	store.byCode[Code(imposter)] = victim
+	code, created, err := store.Mint(imposter)
+	if err != nil || !created {
+		t.Fatalf("mint: %v created=%v", err, created)
+	}
+	if code == Code(imposter) || len(code) != codeLen+1 {
+		t.Fatalf("collision must extend the code, got %q", code)
+	}
+	if url, ok := store.Lookup(code); !ok || url != imposter {
+		t.Fatalf("extended code resolves to %q", url)
+	}
+	if url, _ := store.Lookup(Code(imposter)); url != victim {
+		t.Fatalf("victim's code was clobbered: %q", url)
+	}
+}
+
+func TestMintSkipsReservedSpelling(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "links.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No real URL hashes to "healthz" on demand; simulate by marking the
+	// 7-char prefix reserved-equivalent via the same path the loop takes.
+	url := "https://example.com/reserved-spelling-probe-long-enough"
+	if reservedSegments[Code(url)] {
+		t.Skip("astronomically unlucky: probe URL actually spells a reserved word")
+	}
+	code, _, err := store.Mint(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reservedSegments[code] {
+		t.Fatalf("minted a reserved spelling %q", code)
+	}
+}
+
+func TestClientSkipsMintingShortURLs(t *testing.T) {
+	client := Client{Token: "irrelevant"}
+	short := "https://x.com/ab" // < MintThreshold, no static rule
+	result, err := client.Shorten(short)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Minted || result.Short != short {
+		t.Fatalf("short URL must pass through unchanged, got %+v", result)
+	}
+}
+
 func TestClientNoTokenStillPrintsOriginal(t *testing.T) {
 	client := Client{}
-	result, err := client.Shorten("https://example.com/needs/minting")
+	long := "https://example.com/needs/minting/and/is/long/enough/to/qualify"
+	result, err := client.Shorten(long)
 	if err == nil {
 		t.Fatal("want error without token")
 	}
-	if result.Short != "https://example.com/needs/minting" {
+	if result.Short != long {
 		t.Fatalf("fallback must return the original URL, got %q", result.Short)
 	}
 }

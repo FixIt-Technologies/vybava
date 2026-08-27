@@ -15,16 +15,29 @@ import (
 	"time"
 )
 
-// codeLen is fixed: route dispatch and namespace-collision safety rely on
-// every minted code being exactly this long.
-const codeLen = 7
+// codeLen is the default code length; the store extends a code (up to
+// maxCodeLen, the full hash) when its prefix collides with a different URL or
+// a reserved path segment.
+const (
+	codeLen    = 7
+	maxCodeLen = 52
+)
 
 var codeEncoding = base32.StdEncoding.WithPadding(base32.NoPadding)
 
 // Code derives the permanent, idempotent short code for a URL.
 func Code(long string) string {
+	return CodeN(long, codeLen)
+}
+
+// CodeN is Code at an explicit prefix length (collision extension).
+func CodeN(long string, n int) string {
 	sum := sha256.Sum256([]byte(long))
-	return strings.ToLower(codeEncoding.EncodeToString(sum[:]))[:codeLen]
+	full := strings.ToLower(codeEncoding.EncodeToString(sum[:]))
+	if n > len(full) {
+		n = len(full)
+	}
+	return full[:n]
 }
 
 // Result is one shortened URL, JSON-stable for automation.
@@ -49,6 +62,11 @@ func (c Client) base() string {
 	return DefaultBase
 }
 
+// MintThreshold is the URL length below which minting is skipped: shorter
+// URLs never wrap in the panes this tool exists for (decision 0002 item 7),
+// and a code buys nothing over a URL that is already short.
+const MintThreshold = 40
+
 // Shorten resolves one URL. URLs already shorter than the short form (or not
 // shortenable without a token) come back unchanged with Static/Minted false —
 // printing something clickable always beats erroring mid-pipeline.
@@ -58,6 +76,9 @@ func (c Client) Shorten(long string) (Result, error) {
 	}
 	if path := ShortenStatic(long); path != "" {
 		return Result{Long: long, Short: c.base() + "/" + path, Static: true}, nil
+	}
+	if len(long) < MintThreshold {
+		return Result{Long: long, Short: long}, nil
 	}
 	if c.Token == "" {
 		return Result{Long: long, Short: long}, fmt.Errorf("no mint token (set LUKO_TOKEN or keychain item %q)", keychainService)

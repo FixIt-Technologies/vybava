@@ -62,14 +62,38 @@ func OpenStore(path string) (*Store, error) {
 	return s, scanner.Err()
 }
 
+// maxLinks bounds the in-memory store. Minting is token-authed, so this is a
+// backstop against a runaway minter, not an attacker.
+const maxLinks = 100_000
+
 // Mint records url under its deterministic code and reports whether the code
-// was newly created.
+// was newly created. A 7-char prefix that already maps to a DIFFERENT url (or
+// spells a reserved path segment) extends until it is free or matches — a
+// truncated-hash collision must never redirect to the wrong target.
 func (s *Store) Mint(url string) (code string, created bool, err error) {
-	code = Code(url)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, exists := s.byCode[code]; exists {
-		return code, false, nil
+	code = ""
+	for n := codeLen; n <= maxCodeLen; n++ {
+		candidate := CodeN(url, n)
+		if reservedSegments[candidate] {
+			continue
+		}
+		existing, exists := s.byCode[candidate]
+		if exists && existing != url {
+			continue
+		}
+		if exists {
+			return candidate, false, nil
+		}
+		code = candidate
+		break
+	}
+	if code == "" {
+		return "", false, fmt.Errorf("code space exhausted for %q", url)
+	}
+	if len(s.byCode) >= maxLinks {
+		return "", false, fmt.Errorf("store at capacity (%d links)", maxLinks)
 	}
 	line, err := json.Marshal(storeRecord{Code: code, URL: url, At: time.Now().UTC()})
 	if err != nil {
@@ -103,7 +127,7 @@ type Server struct {
 	Log       *log.Logger
 }
 
-var codePattern = regexp.MustCompile(`^[a-z2-7]{7}$`)
+var codePattern = regexp.MustCompile(`^[a-z2-7]{7,52}$`)
 
 func (s *Server) logf(format string, args ...any) {
 	if s.Log != nil {
