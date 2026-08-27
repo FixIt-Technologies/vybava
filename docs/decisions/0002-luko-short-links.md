@@ -27,8 +27,12 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
 
 - Hosting: the redirector deploys via deployik (custom domain + auto-TLS) —
   the house PaaS doing exactly its job.
-- Static rewrite codes: minted codes are always 7 chars from the base32
-  alphabet, so they cannot collide with reserved namespace segments.
+- Minted codes start at 7 base32 chars and extend per-entry when the prefix
+  collides with a different URL or spells a reserved segment — a code must
+  never redirect to the wrong target. The store is capped at 100k links
+  (token-authed minting makes this a runaway backstop, not a security bound).
+- The CLI mints only URLs ≥ 40 chars (decision 7); shorter ones pass through
+  unchanged — a code buys nothing over an already-short URL.
 - GitHub redirects `/pull/N` ↔ `/issues/N` automatically, so one `gh` form
   covers PRs and issues.
 - Verification: after DNS + deploy, click-test a short link in a deliberately
@@ -48,5 +52,8 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
 
 ## Open questions
 
-- Where luko.to's DNS is hosted (not in the GoDaddy account) — user points the
-  apex at the deployik endpoint.
+- ~~Where luko.to's DNS is hosted~~ — spaceship.io; apex A record set to the
+  deployik endpoint 2026-08-27.
+- The global CLAUDE.md line (decision 6) deliberately lands only AFTER the
+  deployed redirector passes the live click test — adding it earlier would
+  have every session printing dead links.
