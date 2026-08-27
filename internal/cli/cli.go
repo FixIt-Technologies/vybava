@@ -16,6 +16,7 @@ import (
 	"github.com/FixIt-Technologies/vybava/internal/fontfreeze"
 	"github.com/FixIt-Technologies/vybava/internal/installer"
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
+	"github.com/FixIt-Technologies/vybava/internal/perfrig"
 	"github.com/FixIt-Technologies/vybava/internal/state"
 	"github.com/FixIt-Technologies/vybava/internal/ui"
 	"github.com/spf13/cobra"
@@ -71,6 +72,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "fontfreeze" {
 		return rt.fontfreezeApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "perfrig" {
+		return rt.perfrigCommand("perfrig"), nil
+	}
 	if filepath.Base(invokedAs) == "shrt" {
 		return rt.shrtApplet(), nil
 	}
@@ -93,6 +97,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.doctorCommand(),
 		rt.memoryCommand(),
 		rt.fontfreezeCommand("fontfreeze [fonts.yaml]"),
+		rt.perfrigCommand("perfrig"),
 		rt.shrtCommand("shrt [url...]"),
 		rt.browseCommand(),
 	)
@@ -566,6 +571,123 @@ func (rt *runtime) memoryLintCommand(use string) *cobra.Command {
 	return command
 }
 
+// perfrigCommand wires the reusable performance-drill orchestrator. Domain
+// logic lives in internal/perfrig; this is thin CLI glue per the architecture
+// laws. Subcommands: validate, plan (dry look, runs nothing), run.
+func (rt *runtime) perfrigCommand(use string) *cobra.Command {
+	command := &cobra.Command{
+		Use:   use,
+		Short: "Run a performance drill from a testing/<project>/perf manifest",
+		Long: "perfrig orchestrates the generic, safety-critical half of a load test — the neighbor guard,\n" +
+			"the staged ramp (push-to-first-failure), and the percentile-vs-concurrency report — while each\n" +
+			"project supplies its own seed/auth/generator commands via a perf.manifest.yml.",
+	}
+
+	validate := &cobra.Command{
+		Use:   "validate <manifest>",
+		Short: "Parse and validate a perf manifest",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			m, err := perfrig.LoadManifest(args[0])
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, m)
+			}
+			fmt.Fprintf(rt.stdout, "ok: %s (mode=%s, %d generator(s), %d stage(s))\n",
+				m.Project, m.Mode, len(m.Generators), len(m.Ramp.Stages))
+			return nil
+		},
+	}
+
+	plan := &cobra.Command{
+		Use:   "plan <manifest>",
+		Short: "Print the resolved drill (stages + commands) without running anything",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			m, err := perfrig.LoadManifest(args[0])
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, struct {
+					Manifest perfrig.Manifest    `json:"manifest"`
+					Stages   []perfrig.StagePlan `json:"stages"`
+				}{m, perfrig.PlanRamp(m)})
+			}
+			fmt.Fprint(rt.stdout, perfrig.Runner{M: m}.Plan())
+			return nil
+		},
+	}
+
+	var maxStage int
+	var reportOut string
+	run := &cobra.Command{
+		Use:   "run <manifest>",
+		Short: "Execute the drill: seed → (rig up) → guarded ramp → report",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			m, err := perfrig.LoadManifest(args[0])
+			if err != nil {
+				return err
+			}
+			// Under --json the live stream moves to stderr so stdout carries
+			// exactly one machine-readable document: the drill object.
+			streamOut := rt.stdout
+			if rt.json {
+				streamOut = rt.stderr
+			}
+			runner := perfrig.Runner{M: m, Opt: perfrig.Options{
+				Stdout:   streamOut,
+				Stderr:   rt.stderr,
+				MaxStage: maxStage,
+			}}
+			drill, err := runner.Run(cmd.Context())
+			if err != nil {
+				return err
+			}
+			report := drill.Markdown()
+			if rt.json {
+				if jerr := writeJSON(rt.stdout, drill); jerr != nil {
+					return jerr
+				}
+			} else {
+				fmt.Fprint(rt.stdout, "\n"+report)
+			}
+			targets := []string{}
+			if reportOut != "" {
+				targets = append(targets, reportOut)
+			}
+			// The manifest's report.out is a directory; each run drops a
+			// timestamped artifact there.
+			if m.Report.Out != "" {
+				dir, derr := expandHome(m.Report.Out)
+				if derr != nil {
+					return derr
+				}
+				if derr := os.MkdirAll(dir, 0o755); derr != nil {
+					return fmt.Errorf("report.out %q must be a writable directory: %w", dir, derr)
+				}
+				targets = append(targets, filepath.Join(dir,
+					fmt.Sprintf("%s-%s.md", m.Project, drill.StartedAt.Format("20060102-150405"))))
+			}
+			for _, t := range targets {
+				if werr := os.WriteFile(t, []byte(report), 0o644); werr != nil {
+					return werr
+				}
+				fmt.Fprintf(rt.stderr, "report written to %s\n", t)
+			}
+			return nil
+		},
+	}
+	run.Flags().IntVar(&maxStage, "max-stage", 0, "run only the first N stages (0 = whole ramp); use for calibration")
+	run.Flags().StringVar(&reportOut, "report-out", "", "also write the markdown report to this path")
+
+	command.AddCommand(validate, plan, run)
+	return command
+}
+
 func (rt *runtime) browseCommand() *cobra.Command {
 	var agent, scope, binDir, rootDir string
 	var dryRun bool
@@ -623,6 +745,19 @@ func addInstallFlags(command *cobra.Command, agent, scope, binDir, rootDir *stri
 	command.Flags().StringVar(binDir, "bin-dir", "", "applet destination (default ~/.local/bin)")
 	command.Flags().StringVar(rootDir, "root", "", "project root for project-scoped installs (default current directory)")
 	command.Flags().BoolVar(dryRun, "dry-run", false, "show the installation plan without changing files")
+}
+
+// expandHome resolves a leading "~/" (or bare "~") against the user's home
+// directory so manifest paths like ~/Exports/... land where they promise.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
 }
 
 func writeJSON(writer io.Writer, value any) error {
