@@ -29,6 +29,30 @@ go build -o ./bin/vybava ./cmd/vybava
 ./bin/vybava doctor
 ```
 
+## Playwright MCP: one pin, one browser registry
+
+`pwmcp` makes every Playwright MCP server on the workstation resolve the same
+`@playwright/mcp` version and share one browser registry that lives outside the
+OS cache directory:
+
+```sh
+vybava install pwmcp
+pwmcp install          # pinned server + the browser revisions it needs
+pwmcp status           # pin, registry location, orphaned revisions
+pwmcp prune            # delete only what no installed pin still needs
+```
+
+Point project MCP configs at it instead of a floating tag:
+
+```json
+{ "mcpServers": { "playwright": { "command": "pwmcp", "args": ["serve", "--headless"] } } }
+```
+
+Arguments are forwarded to the server untouched, and `--isolated` is prepended
+unless they already choose a profile. Profiles are isolated per server; the
+browser binary is shared on purpose — duplicating it is what multiplies
+downloads. See `docs/decisions/0003-pinned-playwright-mcp.md`.
+
 ## Install with Homebrew
 
 Výbava is public; its Homebrew tap is still private, so Homebrew needs a token

@@ -19,6 +19,12 @@ items:
     description: Shorten URLs into terminal-safe luko.to links that never wrap or truncate on click in narrow panes; also runs the redirector server.
     applet: shrt
 
+  - id: pwmcp
+    kind: applet
+    status: experimental
+    description: Run every Playwright MCP server from one pinned install and one shared browser registry kept outside the OS cache, with per-server profile isolation.
+    applet: pwmcp
+
   - id: prm
     kind: skill
     status: experimental
@@ -51,6 +57,7 @@ groups:
       - merge
       - fontfreeze
       - shrt
+      - pwmcp
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -65,6 +72,7 @@ groups:
       - memorylint
       - fontfreeze
       - shrt
+      - pwmcp
       - prm
       - prc
       - merge
