@@ -75,6 +75,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "perfrig" {
 		return rt.perfrigCommand("perfrig"), nil
 	}
+	if filepath.Base(invokedAs) == "shrt" {
+		return rt.shrtApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -95,6 +98,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.memoryCommand(),
 		rt.fontfreezeCommand("fontfreeze [fonts.yaml]"),
 		rt.perfrigCommand("perfrig"),
+		rt.shrtCommand("shrt [url...]"),
 		rt.browseCommand(),
 	)
 	return root, nil
