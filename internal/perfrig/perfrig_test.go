@@ -291,6 +291,60 @@ func TestMarkdownEmptyStagesDoesNotPanic(t *testing.T) {
 	}
 }
 
+func TestGuardWatchAbortsOnUnreachableProbe(t *testing.T) {
+	// An unreachable canary is a breach — a guard that treats connection
+	// errors as healthy is blind exactly when the neighbor is down hard.
+	g := Guard{Name: "n", Probe: "http://127.0.0.1:1/health", IntervalS: 1, ExpectCode: 200, Breaches: 1}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	aborted := make(chan struct{})
+	probes := g.Watch(ctx, func(Probe) { close(aborted) })
+	go func() {
+		for range probes {
+		}
+	}()
+	select {
+	case <-aborted:
+	case <-time.After(4 * time.Second):
+		t.Fatal("guard never aborted on an unreachable probe target")
+	}
+}
+
+func TestStageDeadlineKillsHungGenerator(t *testing.T) {
+	m := runnable([]Generator{{ID: "g", Cmd: "sleep 30", ScaleEnv: "N"}},
+		[]map[string]int{{"g": 1}})
+	start := time.Now()
+	d := runIt(t, m, Options{StageTimeout: 500 * time.Millisecond})
+	if elapsed := time.Since(start); elapsed > 15*time.Second {
+		t.Fatalf("hung generator not killed at the stage deadline (took %s)", elapsed)
+	}
+	s := d.Stages[0]
+	if !s.Failed || !strings.Contains(s.Reason, "deadline") {
+		t.Fatalf("deadline kill must FAIL the stage with a deadline reason: %+v", s)
+	}
+	if s.Aborted || d.Aborted {
+		t.Fatalf("a deadline kill is a target failure, not a guard abort: %+v", s)
+	}
+}
+
+func TestValidateRejectsNegativeGuardAndEmptyStackCommands(t *testing.T) {
+	m := validIsolatedManifest()
+	m.Guard = &Guard{Name: "n", Probe: "http://x/h", IntervalS: -1}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "negative") {
+		t.Fatalf("negative interval must be rejected, got %v", err)
+	}
+	m = validIsolatedManifest()
+	m.Guard = &Guard{Name: "n"}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "guard.probe") {
+		t.Fatalf("blank guard probe must be rejected, got %v", err)
+	}
+	m = validIsolatedManifest()
+	m.Stack = &Stack{Dir: ".", Up: " ", Down: "true"}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "stack.up") {
+		t.Fatalf("blank stack.up must be rejected, got %v", err)
+	}
+}
+
 func TestLoadManifestRejectsUnknownFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "perf.manifest.yml")
 	manifest := `schema: 1

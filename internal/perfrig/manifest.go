@@ -172,10 +172,29 @@ func (m Manifest) Validate() error {
 	if strings.TrimSpace(m.Project) == "" {
 		problems = append(problems, "project is required")
 	}
+	if m.Guard != nil {
+		if strings.TrimSpace(m.Guard.Probe) == "" {
+			problems = append(problems, "guard.probe is required")
+		}
+		// Zero values get defaults; negatives would survive them and e.g. panic
+		// time.NewTicker, so reject outright.
+		if m.Guard.IntervalS < 0 || m.Guard.Breaches < 0 || m.Guard.AbortP95Ms < 0 {
+			problems = append(problems, "guard interval_s/breaches/abort_p95_ms must not be negative")
+		}
+	}
 	switch m.Mode {
 	case ModeIsolatedRig:
 		if m.Stack == nil {
 			problems = append(problems, "isolated-rig mode requires a stack block")
+		} else {
+			// An empty command would "succeed" via bash -c "" and fake a rig
+			// lifecycle that never happened.
+			if strings.TrimSpace(m.Stack.Up) == "" {
+				problems = append(problems, "stack.up is required")
+			}
+			if strings.TrimSpace(m.Stack.Down) == "" {
+				problems = append(problems, "stack.down is required")
+			}
 		}
 	case ModeProdDirect:
 		// The whole point of prod-direct is that perfrig doesn't own the

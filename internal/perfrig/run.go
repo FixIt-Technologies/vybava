@@ -23,6 +23,9 @@ type Options struct {
 	Stderr    io.Writer
 	MaxStage  int    // run only the first N stages (<=0 = whole ramp); for calibration
 	ShellPath string // shell to invoke commands with (default "/bin/bash")
+	// StageTimeout overrides the manifest-derived hard stage deadline
+	// (2×hold+60s) when positive; primarily an operator/test knob.
+	StageTimeout time.Duration
 }
 
 var (
@@ -156,8 +159,8 @@ func (r Runner) checkReachable(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("target not reachable (%s): status %d", url, resp.StatusCode)
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return fmt.Errorf("target not reachable (%s): status %d (want 2xx/3xx)", url, resp.StatusCode)
 	}
 	fmt.Fprintf(r.out(), "target reachable: GET %s -> %d\n", url, resp.StatusCode)
 	return nil
@@ -204,13 +207,18 @@ func (r Runner) Run(ctx context.Context) (Drill, error) {
 	}
 	if r.M.Mode == ModeIsolatedRig && r.M.Stack != nil {
 		fmt.Fprintln(r.out(), "== rig up ==")
+		// Register teardown BEFORE up runs: compose-style startup can create
+		// some containers and still exit non-zero, and a partial rig must not
+		// be left behind. Bounded context so a stalled down can't wedge Run.
+		defer func() {
+			fmt.Fprintln(r.out(), "== rig down ==")
+			downCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			_ = r.exec(downCtx, r.M.Stack.Down, r.M.Stack.Dir, nil, "")
+		}()
 		if err := r.exec(ctx, r.M.Stack.Up, r.M.Stack.Dir, nil, ""); err != nil {
 			return d, fmt.Errorf("stack up: %w", err)
 		}
-		defer func() {
-			fmt.Fprintln(r.out(), "== rig down ==")
-			_ = r.exec(context.Background(), r.M.Stack.Down, r.M.Stack.Dir, nil, "")
-		}()
 		if r.M.Stack.Ready != "" {
 			if err := r.exec(ctx, r.M.Stack.Ready, r.M.Stack.Dir, nil, ""); err != nil {
 				return d, fmt.Errorf("rig never became ready: %w", err)
@@ -248,7 +256,11 @@ func (r Runner) Run(ctx context.Context) (Drill, error) {
 
 		// Every generator of the stage launches together; the hard deadline
 		// keeps a hung generator from wedging the drill.
-		stageCtx, cancelStage := context.WithTimeout(guardCtx, r.M.StageDeadline())
+		deadline := r.M.StageDeadline()
+		if r.Opt.StageTimeout > 0 {
+			deadline = r.Opt.StageTimeout
+		}
+		stageCtx, cancelStage := context.WithTimeout(guardCtx, deadline)
 		var wg sync.WaitGroup
 		resCh := make(chan genResult, len(stage.Counts))
 		for id, count := range stage.Counts {
@@ -295,7 +307,7 @@ func (r Runner) Run(ctx context.Context) (Drill, error) {
 				res.Aborted = true
 			case deadlineHit:
 				res.Failed = true
-				res.Reason = fmt.Sprintf("stage deadline %s exceeded (hung generator killed)", r.M.StageDeadline())
+				res.Reason = fmt.Sprintf("stage deadline %s exceeded (hung generator killed)", deadline)
 			default:
 				res.Failed = true
 				if res.Reason == "" {
