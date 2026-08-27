@@ -26,13 +26,50 @@ func TestResolveCombinesAndDeduplicatesSelectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	items, err := c.Resolve([]string{"recommended", "memorylint", "experimental"})
+	selectors := []string{"recommended", "memorylint", "experimental"}
+	items, err := c.Resolve(selectors)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	if got, want := len(items), 6; got != want {
-		t.Fatalf("Resolve() item count = %d, want %d", got, want)
+	// Derive the expectation from the catalog rather than hard-coding a count,
+	// so adding an item to a group cannot fail a test about deduplication.
+	// "memorylint" is deliberately named twice: once directly and once through
+	// the recommended group.
+	want := expandUnique(t, c, selectors)
+	if got := len(items); got != len(want) {
+		t.Fatalf("Resolve() item count = %d, want %d (%v)", got, len(want), want)
 	}
+	seen := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		if _, duplicate := seen[item.ID]; duplicate {
+			t.Fatalf("Resolve() returned %q twice", item.ID)
+		}
+		seen[item.ID] = struct{}{}
+		if _, expected := want[item.ID]; !expected {
+			t.Fatalf("Resolve() returned unselected item %q", item.ID)
+		}
+	}
+}
+
+// expandUnique flattens selectors into the set of item IDs they name, treating a
+// selector as a group first and an item ID otherwise.
+func expandUnique(t *testing.T, c catalog.Catalog, selectors []string) map[string]struct{} {
+	t.Helper()
+	groups := make(map[string][]string, len(c.Groups))
+	for _, group := range c.Groups {
+		groups[group.ID] = group.Items
+	}
+	unique := make(map[string]struct{})
+	for _, selector := range selectors {
+		if members, isGroup := groups[selector]; isGroup {
+			for _, member := range members {
+				unique[member] = struct{}{}
+			}
+			continue
+		}
+		unique[selector] = struct{}{}
+	}
+	return unique
 }
 
 func TestResolveRejectsUnknownSelector(t *testing.T) {
