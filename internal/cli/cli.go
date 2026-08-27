@@ -606,6 +606,12 @@ func (rt *runtime) perfrigCommand(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if rt.json {
+				return writeJSON(rt.stdout, struct {
+					Manifest perfrig.Manifest    `json:"manifest"`
+					Stages   []perfrig.StagePlan `json:"stages"`
+				}{m, perfrig.PlanRamp(m)})
+			}
 			fmt.Fprint(rt.stdout, perfrig.Runner{M: m}.Plan())
 			return nil
 		},
@@ -622,8 +628,14 @@ func (rt *runtime) perfrigCommand(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// Under --json the live stream moves to stderr so stdout carries
+			// exactly one machine-readable document: the drill object.
+			streamOut := rt.stdout
+			if rt.json {
+				streamOut = rt.stderr
+			}
 			runner := perfrig.Runner{M: m, Opt: perfrig.Options{
-				Stdout:   rt.stdout,
+				Stdout:   streamOut,
 				Stderr:   rt.stderr,
 				MaxStage: maxStage,
 			}}
@@ -651,7 +663,7 @@ func (rt *runtime) perfrigCommand(use string) *cobra.Command {
 					return derr
 				}
 				if derr := os.MkdirAll(dir, 0o755); derr != nil {
-					return derr
+					return fmt.Errorf("report.out %q must be a writable directory: %w", dir, derr)
 				}
 				targets = append(targets, filepath.Join(dir,
 					fmt.Sprintf("%s-%s.md", m.Project, drill.StartedAt.Format("20060102-150405"))))
