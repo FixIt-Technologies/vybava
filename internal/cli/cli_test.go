@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+// TestMulticallDispatch pins the multicall contract: invoking the binary under
+// an applet's name yields that applet's command, anything else the vybava root.
+func TestMulticallDispatch(t *testing.T) {
+	cases := []struct{ invokedAs, wantName string }{
+		{"memorylint", "memorylint"},
+		{"fontfreeze", "fontfreeze"},
+		{"perfrig", "perfrig"},
+		{"shrt", "shrt"},
+		{"/usr/local/bin/perfrig", "perfrig"}, // dispatch is on the basename
+		{"vybava", "vybava"},
+	}
+	for _, c := range cases {
+		cmd, err := (App{}).Command(c.invokedAs)
+		if err != nil {
+			t.Fatalf("Command(%q) error: %v", c.invokedAs, err)
+		}
+		if got := cmd.Name(); got != c.wantName {
+			t.Errorf("Command(%q).Name() = %q, want %q", c.invokedAs, got, c.wantName)
+		}
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
