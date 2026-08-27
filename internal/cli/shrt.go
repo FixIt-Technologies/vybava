@@ -91,6 +91,9 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 				Addr:              addr,
 				Handler:           server.Handler(),
 				ReadHeaderTimeout: 5 * time.Second,
+				ReadTimeout:       10 * time.Second,
+				WriteTimeout:      30 * time.Second,
+				IdleTimeout:       120 * time.Second,
 			}
 			return httpServer.ListenAndServe()
 		},
