@@ -21,7 +21,7 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
 | 4 | Link shape | Per-domain static rewrites + minted tails | `luko.to/gh/fixit/1088` is readable and derivable offline; everything else gets an idempotent minted code (`luko.to/<7-char hash>`) that is permanent so old scrollback keeps working. |
 | 5 | Gating | Open redirects, authed minting | Targets are GitHub-auth-gated or mesh-only; a guessed path leaks only a repo path. Minting requires a bearer token (onyx-held). |
 | 6 | Minting interface | vybava applet `shrt` + one global CLAUDE.md line | Works for Claude, Codex, any AI, and humans; no per-session MCP context cost. `shrt --osc8` covers label links from Bash output. |
-| 7 | Shortening policy | Agents shorten clickable URLs ≥ 40 chars | Below ~40 chars nothing wraps even in the narrowest panes in use (~55 cols). |
+| 7 | Shortening policy | Agents run EVERY printed URL through `shrt`; the CLI decides (revised 2026-08-28) | No judgment left to the agent — `shrt` returns URLs under 40 chars unchanged (below that nothing wraps even in ~55-col panes), so piping everything is always safe. |
 
 ## Assumptions
 
@@ -31,8 +31,9 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
   collides with a different URL or spells a reserved segment — a code must
   never redirect to the wrong target. The store is capped at 100k links
   (token-authed minting makes this a runaway backstop, not a security bound).
-- The CLI mints only URLs ≥ 40 chars (decision 7); shorter ones pass through
-  unchanged — a code buys nothing over an already-short URL.
+- The CLI mints only URLs ≥ 40 chars; shorter ones pass through unchanged — a
+  code buys nothing over an already-short URL. This threshold is the CLI's,
+  not the agent's: the global instruction is unconditional (decision 7).
 - GitHub redirects `/pull/N` ↔ `/issues/N` automatically, so one `gh` form
   covers PRs and issues.
 - Verification: after DNS + deploy, click-test a short link in a deliberately
@@ -54,6 +55,6 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
 
 - ~~Where luko.to's DNS is hosted~~ — spaceship.io; apex A record set to the
   deployik endpoint 2026-08-27.
-- The global CLAUDE.md line (decision 6) deliberately lands only AFTER the
-  deployed redirector passes the live click test — adding it earlier would
-  have every session printing dead links.
+- ~~The global CLAUDE.md line lands only after the live click test~~ — landed
+  2026-08-28 after verification: `Print every URL through `` `shrt <url>` `` —
+  bare, alone on its own line.`
