@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -50,9 +51,10 @@ type Result struct {
 
 // Client shortens URLs: static rules offline first, the mint API otherwise.
 type Client struct {
-	Base  string // redirector origin, DefaultBase when empty
-	Token string // mint bearer token; empty means static-only
-	HTTP  *http.Client
+	Base     string // redirector origin, DefaultBase when empty
+	Token    string // mint bearer token; empty means static-only
+	DynRules []Rule // cached dynamic rules for offline matching (see LoadRuleCache)
+	HTTP     *http.Client
 }
 
 func (c Client) base() string {
@@ -75,6 +77,9 @@ func (c Client) Shorten(long string) (Result, error) {
 		return Result{}, err
 	}
 	if path := ShortenStatic(long); path != "" {
+		return Result{Long: long, Short: c.base() + "/" + path, Static: true}, nil
+	}
+	if path := ShortenDynamic(c.DynRules, long); path != "" {
 		return Result{Long: long, Short: c.base() + "/" + path, Static: true}, nil
 	}
 	if len(long) < MintThreshold {
@@ -171,4 +176,145 @@ func StoreToken(token string) error {
 // OSC8 wraps label as a terminal hyperlink to target (Warp, iTerm2, kitty…).
 func OSC8(label, target string) string {
 	return "\x1b]8;;" + target + "\x1b\\" + label + "\x1b]8;;\x1b\\"
+}
+
+// --- dynamic-rule API client + local cache -------------------------------
+
+// RuleCachePath is where the CLI caches the server's dynamic rules for
+// offline matching.
+func RuleCachePath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "shrt", "rules.json"), nil
+}
+
+// LoadRuleCache reads the cached rules; a missing or corrupt cache is just an
+// empty list — the mint path self-heals online.
+func LoadRuleCache() []Rule {
+	path, err := RuleCachePath()
+	if err != nil {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var rules []Rule
+	if json.Unmarshal(data, &rules) != nil {
+		return nil
+	}
+	return rules
+}
+
+// SaveRuleCache writes the rule cache; failures are non-fatal for callers.
+func SaveRuleCache(rules []Rule) error {
+	path, err := RuleCachePath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(rules, "", " ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func (c Client) apiDo(method, path string, body any) ([]byte, int, error) {
+	if c.Token == "" {
+		return nil, 0, fmt.Errorf("no token (set LUKO_TOKEN or keychain item %q)", keychainService)
+	}
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, 0, err
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequest(method, c.base()+path, reader)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.Token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	if resp.StatusCode >= 400 {
+		return payload, resp.StatusCode, fmt.Errorf("%s %s: %s: %s", method, path, resp.Status, strings.TrimSpace(string(payload)))
+	}
+	return payload, resp.StatusCode, nil
+}
+
+// FetchRules lists the server's dynamic rules and refreshes the local cache.
+func (c Client) FetchRules() ([]Rule, error) {
+	payload, _, err := c.apiDo(http.MethodGet, "/api/rules", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Rules []Rule `json:"rules"`
+	}
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return nil, err
+	}
+	_ = SaveRuleCache(out.Rules)
+	return out.Rules, nil
+}
+
+// CreateRule adds a dynamic rule server-side and refreshes the cache.
+func (c Client) CreateRule(name, prefix string) (Rule, error) {
+	payload, _, err := c.apiDo(http.MethodPost, "/api/rules", ruleRequest{Name: name, Prefix: prefix})
+	if err != nil {
+		return Rule{}, err
+	}
+	var rule Rule
+	if err := json.Unmarshal(payload, &rule); err != nil {
+		return Rule{}, err
+	}
+	_, fetchErr := c.FetchRules()
+	_ = fetchErr // cache refresh is best-effort; the rule itself succeeded
+	return rule, nil
+}
+
+// UpdateRule replaces a rule's prefix server-side and refreshes the cache.
+func (c Client) UpdateRule(name, prefix string) (Rule, error) {
+	payload, _, err := c.apiDo(http.MethodPut, "/api/rules/"+name, ruleRequest{Prefix: prefix})
+	if err != nil {
+		return Rule{}, err
+	}
+	var rule Rule
+	if err := json.Unmarshal(payload, &rule); err != nil {
+		return Rule{}, err
+	}
+	_, fetchErr := c.FetchRules()
+	_ = fetchErr
+	return rule, nil
+}
+
+// DeleteRule removes a rule server-side and refreshes the cache.
+func (c Client) DeleteRule(name string) error {
+	if _, _, err := c.apiDo(http.MethodDelete, "/api/rules/"+name, nil); err != nil {
+		return err
+	}
+	_, fetchErr := c.FetchRules()
+	_ = fetchErr
+	return nil
 }

@@ -122,8 +122,9 @@ func (s *Store) Lookup(code string) (string, bool) {
 // Server is the luko.to redirector.
 type Server struct {
 	Base      string // public origin used in mint responses
-	MintToken string // bearer token required by /api/mint; empty disables minting
+	MintToken string // bearer token required by the /api endpoints; empty disables them
 	Store     *Store
+	Rules     *RuleStore
 	Log       *log.Logger
 }
 
@@ -142,8 +143,96 @@ func (s *Server) Handler() http.Handler {
 		fmt.Fprintln(w, "ok")
 	})
 	mux.HandleFunc("POST /api/mint", s.handleMint)
+	mux.HandleFunc("GET /api/rules", s.authed(s.handleRuleList))
+	mux.HandleFunc("POST /api/rules", s.authed(s.handleRuleCreate))
+	mux.HandleFunc("PUT /api/rules/{name}", s.authed(s.handleRuleUpdate))
+	mux.HandleFunc("DELETE /api/rules/{name}", s.authed(s.handleRuleDelete))
 	mux.HandleFunc("/", s.handleRedirect)
 	return mux
+}
+
+// authed gates an API handler behind the bearer token.
+func (s *Server) authed(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.MintToken == "" {
+			http.Error(w, "api disabled", http.StatusForbidden)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+s.MintToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+type ruleRequest struct {
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
+}
+
+func (s *Server) handleRuleList(w http.ResponseWriter, _ *http.Request) {
+	writeAPIJSON(w, map[string]any{"rules": s.Rules.List()})
+}
+
+func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request) {
+	var req ruleRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	rule, err := s.Rules.Create(strings.TrimSpace(req.Name), strings.TrimSpace(req.Prefix))
+	if errors.Is(err, ErrRuleExists) {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.logf("rule created: %s -> %s", rule.Name, rule.Prefix)
+	writeAPIJSON(w, rule)
+}
+
+func (s *Server) handleRuleUpdate(w http.ResponseWriter, r *http.Request) {
+	var req ruleRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	rule, err := s.Rules.Update(r.PathValue("name"), strings.TrimSpace(req.Prefix))
+	if errors.Is(err, ErrRuleNotFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.logf("rule updated: %s -> %s", rule.Name, rule.Prefix)
+	writeAPIJSON(w, rule)
+}
+
+func (s *Server) handleRuleDelete(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	err := s.Rules.Delete(name)
+	if errors.Is(err, ErrRuleNotFound) {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.logf("rule deleted: %s", name)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeAPIJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		log.Printf("shrt: writing api response: %v", err)
+	}
 }
 
 func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +248,19 @@ func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
 	if long, ok := ExpandStatic(path); ok {
 		http.Redirect(w, r, long, http.StatusFound)
 		return
+	}
+	// Dynamic rules: /<name>[/tail]. Names are validated to never collide
+	// with reserved segments or code-shaped strings, so order is safe.
+	if s.Rules != nil {
+		name, tail, _ := strings.Cut(path, "/")
+		if rule, ok := s.Rules.Get(name); ok {
+			long := ExpandDynamic(rule, tail)
+			if q := r.URL.RawQuery; q != "" {
+				long += "?" + q
+			}
+			http.Redirect(w, r, long, http.StatusFound)
+			return
+		}
 	}
 	if codePattern.MatchString(path) {
 		if long, ok := s.Store.Lookup(path); ok {
@@ -189,11 +291,17 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	// A static-rule URL never needs a code; answer with the static form so
-	// version-skewed CLIs still get the canonical short link.
+	// A static- or dynamic-rule URL never needs a code; answer with the rule
+	// form so stale-cached CLIs still get the canonical short link.
 	if path := ShortenStatic(req.URL); path != "" {
 		writeMintResponse(w, mintResponse{Short: s.Base + "/" + path})
 		return
+	}
+	if s.Rules != nil {
+		if path := ShortenDynamic(s.Rules.List(), req.URL); path != "" {
+			writeMintResponse(w, mintResponse{Short: s.Base + "/" + path})
+			return
+		}
 	}
 	code, created, err := s.Store.Mint(req.URL)
 	if err != nil {

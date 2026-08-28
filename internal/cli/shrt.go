@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ func (rt *runtime) shrtCommand(use string) *cobra.Command {
 			"macOS Keychain, service \"luko.to\").",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			client := shrt.Client{Base: base, Token: shrt.LoadToken()}
+			client := shrt.Client{Base: base, Token: shrt.LoadToken(), DynRules: shrt.LoadRuleCache()}
 			var firstErr error
 			var results []shrt.Result
 			for _, arg := range args {
@@ -62,12 +63,102 @@ func (rt *runtime) shrtCommand(use string) *cobra.Command {
 	command.Flags().BoolVar(&osc8, "osc8", false, "emit an OSC 8 hyperlink instead of plain text")
 	command.Flags().StringVar(&label, "label", "", "visible text for --osc8 (default: the short URL)")
 	command.Flags().StringVar(&base, "base", "", "redirector origin override (default "+shrt.DefaultBase+")")
-	command.AddCommand(rt.shrtServeCommand(), rt.shrtTokenCommand())
+	command.AddCommand(rt.shrtServeCommand(), rt.shrtTokenCommand(), rt.shrtRuleCommand())
+	return command
+}
+
+func (rt *runtime) shrtRuleCommand() *cobra.Command {
+	var base string
+	newClient := func() shrt.Client {
+		return shrt.Client{Base: base, Token: shrt.LoadToken()}
+	}
+	displayBase := func() string {
+		if base != "" {
+			return strings.TrimRight(base, "/")
+		}
+		return shrt.DefaultBase
+	}
+	command := &cobra.Command{
+		Use:   "rule",
+		Short: "Manage dynamic prefix rules (server-side, cached locally)",
+		Long: "A rule maps a URL prefix to a named namespace: rule \"sentry\" with prefix\n" +
+			"https://sentry.example.com/issues/ makes any matching URL shorten to\n" +
+			"luko.to/sentry/<tail> — offline via the local cache, immediately\n" +
+			"everywhere via the server. Prefixes must end with \"/\".",
+	}
+	command.PersistentFlags().StringVar(&base, "base", "", "redirector origin override (default "+shrt.DefaultBase+")")
+
+	add := &cobra.Command{
+		Use:   "add <name> <url-prefix>",
+		Short: "Create a rule",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			rule, err := newClient().CreateRule(args[0], args[1])
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, rule)
+			}
+			_, err = fmt.Fprintf(rt.stdout, "%s/%s/… -> %s…\n", displayBase(), rule.Name, rule.Prefix)
+			return err
+		},
+	}
+	update := &cobra.Command{
+		Use:   "update <name> <url-prefix>",
+		Short: "Replace a rule's prefix",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			rule, err := newClient().UpdateRule(args[0], args[1])
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, rule)
+			}
+			_, err = fmt.Fprintf(rt.stdout, "%s/%s/… -> %s…\n", displayBase(), rule.Name, rule.Prefix)
+			return err
+		},
+	}
+	remove := &cobra.Command{
+		Use:     "rm <name>",
+		Aliases: []string{"remove", "delete"},
+		Short:   "Delete a rule (existing short links under it stop resolving)",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := newClient().DeleteRule(args[0]); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(rt.stdout, "rule %s deleted\n", args[0])
+			return err
+		},
+	}
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List rules (refreshes the local cache)",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			rules, err := newClient().FetchRules()
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, rules)
+			}
+			for _, rule := range rules {
+				if _, err := fmt.Fprintf(rt.stdout, "%-14s %s\n", rule.Name, rule.Prefix); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	command.AddCommand(add, update, remove, list)
 	return command
 }
 
 func (rt *runtime) shrtServeCommand() *cobra.Command {
-	var addr, store, base string
+	var addr, store, rules, base string
 	command := &cobra.Command{
 		Use:   "serve",
 		Short: "Run the luko.to redirector server",
@@ -77,10 +168,18 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if rules == "" {
+				rules = filepath.Join(filepath.Dir(store), "rules.json")
+			}
+			ruleStore, err := shrt.OpenRuleStore(rules)
+			if err != nil {
+				return err
+			}
 			server := &shrt.Server{
 				Base:      strings.TrimRight(base, "/"),
 				MintToken: strings.TrimSpace(os.Getenv("LUKO_MINT_TOKEN")),
 				Store:     linkStore,
+				Rules:     ruleStore,
 				Log:       log.New(rt.stderr, "shrt: ", log.LstdFlags),
 			}
 			if server.MintToken == "" {
@@ -100,6 +199,7 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&addr, "addr", ":8080", "listen address")
 	command.Flags().StringVar(&store, "store", "/data/links.jsonl", "minted-links JSONL path")
+	command.Flags().StringVar(&rules, "rules", "", "dynamic-rules JSON path (default: rules.json beside --store)")
 	command.Flags().StringVar(&base, "base", shrt.DefaultBase, "public origin used in mint responses")
 	return command
 }
