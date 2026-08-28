@@ -74,7 +74,11 @@ Memorylint understands Obsidian-style Markdown and checks:
 
 - required YAML frontmatter and allowed memory types;
 - kebab-case filenames and duplicate memory names;
-- memory/index line caps;
+- memory/index line caps and per-home note ceilings (15 personal, 30 team);
+- lifecycle: `provisional` notes must carry `expires: YYYY-MM-DD`, promoted ones
+  must drop it, and an expired provisional is flagged deletable on sight;
+- notes with no `last-used`/`last-verified` signal for 90 days, as eviction
+  candidates — memory that never changed behaviour is context tax;
 - missing index targets and dangling `[[wikilinks]]`;
 - memories missing from their local `MEMORY.md` index;
 - email/IP fixture values that are not explicitly allowlisted.
@@ -85,6 +89,7 @@ Beyond checking, it maintains memory homes:
 memorylint check <home>                 # the rules above
 memorylint fix [--dry-run] <home>       # normalize notes onto the flat v2 schema
 memorylint new --home <home> --type project --name project-topic --description "Use when …"
+memorylint new --provisional …          # status: provisional + expires 60 days out
 memorylint reindex [--write] <home>     # render MEMORY.md deterministically
 memorylint refs [--bare] <home> <file>… # find references to notes that no longer exist
 memorylint graph [--similar] <home>…    # wikilink graph, or likely-duplicate pairs
