@@ -23,6 +23,15 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
 | 6 | Minting interface | vybava applet `shrt` + one global CLAUDE.md line | Works for Claude, Codex, any AI, and humans; no per-session MCP context cost. `shrt --osc8` covers label links from Bash output. |
 | 7 | Shortening policy | Agents run EVERY printed URL through `shrt`; the CLI decides (revised 2026-08-28) | No judgment left to the agent — `shrt` returns URLs under 40 chars unchanged (below that nothing wraps even in ~55-col panes), so piping everything is always safe. |
 
+## Team access (added 2026-08-28)
+
+Five-person team. The env token (`LUKO_MINT_TOKEN`) is the ADMIN identity:
+it alone issues/revokes named member tokens (`shrt token issue|revoke|list`).
+Member tokens mint and manage rules; the server stores only SHA-256 hashes
+(`tokens.json` beside the stores) and logs every mint/rule change with the
+caller's name. Revocation is immediate and per-person. Dynamic rules and the
+mint namespace are shared team-wide by design — one vocabulary.
+
 ## Assumptions
 
 - Hosting: the redirector deploys via deployik (custom domain + auto-TLS) —

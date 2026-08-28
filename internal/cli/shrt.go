@@ -175,11 +175,16 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			tokenStore, err := shrt.OpenTokenStore(filepath.Join(filepath.Dir(store), "tokens.json"))
+			if err != nil {
+				return err
+			}
 			server := &shrt.Server{
 				Base:      strings.TrimRight(base, "/"),
 				MintToken: strings.TrimSpace(os.Getenv("LUKO_MINT_TOKEN")),
 				Store:     linkStore,
 				Rules:     ruleStore,
+				Tokens:    tokenStore,
 				Log:       log.New(rt.stderr, "shrt: ", log.LstdFlags),
 			}
 			if server.MintToken == "" {
@@ -205,7 +210,65 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 }
 
 func (rt *runtime) shrtTokenCommand() *cobra.Command {
-	command := &cobra.Command{Use: "token", Short: "Manage the mint token"}
+	var base string
+	newClient := func() shrt.Client {
+		return shrt.Client{Base: base, Token: shrt.LoadToken()}
+	}
+	command := &cobra.Command{Use: "token", Short: "Manage tokens: your local one (set) and team members' (issue/revoke/list, admin)"}
+	command.PersistentFlags().StringVar(&base, "base", "", "redirector origin override (default "+shrt.DefaultBase+")")
+	issue := &cobra.Command{
+		Use:   "issue <name>",
+		Short: "Issue a named member token (admin) — the value prints ONCE",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			issued, err := newClient().IssueToken(args[0])
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, issued)
+			}
+			_, err = fmt.Fprintf(rt.stdout, "%s\n", issued.Token)
+			if err == nil {
+				fmt.Fprintf(rt.stderr, "token for %q printed above — it cannot be shown again; deliver it securely\n", issued.Name)
+			}
+			return err
+		},
+	}
+	revoke := &cobra.Command{
+		Use:     "revoke <name>",
+		Aliases: []string{"rm"},
+		Short:   "Revoke a member token (admin) — access ends immediately",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			if err := newClient().RevokeToken(args[0]); err != nil {
+				return err
+			}
+			_, err := fmt.Fprintf(rt.stdout, "token %s revoked\n", args[0])
+			return err
+		},
+	}
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List member token names (admin) — never values",
+		Args:  cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			tokens, err := newClient().ListTokens()
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, tokens)
+			}
+			for _, tok := range tokens {
+				if _, err := fmt.Fprintf(rt.stdout, "%-14s issued %s\n", tok.Name, tok.CreatedAt.Format("2006-01-02")); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+	command.AddCommand(issue, revoke, list)
 	set := &cobra.Command{
 		Use:   "set",
 		Short: "Store the mint token in the macOS Keychain (reads one line from stdin)",

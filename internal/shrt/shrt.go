@@ -318,3 +318,44 @@ func (c Client) DeleteRule(name string) error {
 	_ = fetchErr
 	return nil
 }
+
+// IssueToken mints a named member token (admin only). The returned value is
+// the only copy that will ever exist.
+func (c Client) IssueToken(name string) (TokenIssue, error) {
+	payload, _, err := c.apiDo(http.MethodPost, "/api/tokens", tokenIssueRequest{Name: name})
+	if err != nil {
+		return TokenIssue{}, err
+	}
+	var out TokenIssue
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return TokenIssue{}, err
+	}
+	return out, nil
+}
+
+// TokenIssue mirrors the server's issue response.
+type TokenIssue struct {
+	Name  string `json:"name"`
+	Token string `json:"token"`
+}
+
+// RevokeToken deletes a named member token (admin only).
+func (c Client) RevokeToken(name string) error {
+	_, _, err := c.apiDo(http.MethodDelete, "/api/tokens/"+name, nil)
+	return err
+}
+
+// ListTokens lists member token names (admin only) — never values.
+func (c Client) ListTokens() ([]MemberToken, error) {
+	payload, _, err := c.apiDo(http.MethodGet, "/api/tokens", nil)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Tokens []MemberToken `json:"tokens"`
+	}
+	if err := json.Unmarshal(payload, &out); err != nil {
+		return nil, err
+	}
+	return out.Tokens, nil
+}
