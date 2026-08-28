@@ -13,6 +13,8 @@ Keep additions small, independently installable, and catalog-driven.
    change.
 6. Run `go fmt ./...`, `go vet ./...`, `go test ./...`, and
    `goreleaser check`.
+7. Ship it: `scripts/release.sh [major|minor|patch]` from a clean, synced
+   `main` — tags, pushes, and watches the release workflow.
 
 Do not fork payloads for individual AI runtimes. Add or extend an installer
 adapter when a runtime needs a different destination or metadata wrapper.

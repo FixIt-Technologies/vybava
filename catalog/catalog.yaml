@@ -13,6 +13,18 @@ items:
     description: Freeze variable webfonts at the axis positions a site renders and subset them per language, via fonttools.
     applet: fontfreeze
 
+  - id: perfrig
+    kind: applet
+    status: experimental
+    description: Orchestrate a performance drill from a testing/<project>/perf manifest — neighbor guard, staged push-to-first-failure ramp, and percentile-vs-concurrency report; projects supply seed/auth/generator commands.
+    applet: perfrig
+
+  - id: shrt
+    kind: applet
+    status: experimental
+    description: Shorten URLs into terminal-safe luko.to links that never wrap or truncate on click in narrow panes; also runs the redirector server.
+    applet: shrt
+
   - id: prm
     kind: skill
     status: experimental
@@ -44,6 +56,8 @@ groups:
       - prc
       - merge
       - fontfreeze
+      - perfrig
+      - shrt
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -57,6 +71,8 @@ groups:
     items:
       - memorylint
       - fontfreeze
+      - perfrig
+      - shrt
       - prm
       - prc
       - merge

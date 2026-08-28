@@ -1,148 +1,57 @@
 # Výbava
 
 Výbava is FixIt Technologies' portable engineering environment: small tools,
-agent skills, conventions, and diagnostics that can be installed independently
-on a workstation or into a project.
+agent skills, and workstation diagnostics, distributed as one catalog where
+every item installs independently.
 
-## Design
+## Packages
 
-The repository is a catalog, not a monolith. Each item is independently
-installable. Groups such as `recommended` and `experimental` are ordinary,
-composable catalog presets, so creating another workstation profile never
-requires changing installer code.
+| ID | Kind | What it does |
+|---|---|---|
+| `memorylint` | applet | Validate and maintain AI memory homes — schema, indexes, wikilinks, fixtures, write hooks. → [docs/memorylint.md](docs/memorylint.md) |
+| `shrt` | applet | Terminal-safe short links on luko.to — offline repo rules, team-shared dynamic rules, minted codes; also the redirector server. → [docs/shrt.md](docs/shrt.md) |
+| `fontfreeze` | applet | Freeze variable webfonts at rendered axis positions and subset per language. |
+| `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |
+| `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
 
-```text
-catalog/catalog.yaml      package and group source of truth
-cmd/vybava/               management CLI and multicall entrypoint
-internal/                 focused Go modules for catalog/install/doctor/tools
-skills/<id>/              canonical cross-agent skill payloads
-docs/decisions/           architectural decisions and extension contracts
+Groups (`recommended`, `experimental`, `ai-git`, `everything`) are composable
+presets in the catalog — never code.
+
+## Install
+
+Homebrew (everything is public — no authentication needed):
+
+```sh
+brew install --cask FixIt-Technologies/tap/vybava
 ```
 
-## Quick start from source
+From source:
 
 ```sh
 go build -o ./bin/vybava ./cmd/vybava
 ./bin/vybava catalog list
 ./bin/vybava install recommended
-./bin/vybava install experimental --agent all
-./bin/vybava doctor
 ```
 
-## Install with Homebrew
+`install` takes item or group selectors (default: the `recommended` group)
+and supports `--agent claude|codex|all`,
+`--scope user|project`, `--dry-run`, and `--json`. Installed applets are links
+to the `vybava` binary, so `vybava memory lint .` and `memorylint .` are
+equivalent.
 
-Výbava is public; its Homebrew tap is still private, so Homebrew needs a token
-that can read the tap's release assets:
+## Layout
 
-```sh
-gh auth setup-git
-export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
-brew install --cask FixIt-Technologies/tap/vybava
+```text
+catalog/catalog.yaml   package and group source of truth
+cmd/vybava/            multicall entrypoint
+internal/<id>/         one focused Go package per capability
+skills/<id>/           canonical cross-agent skill payloads
+docs/                  per-tool references, release flow, decisions
+Dockerfile             the luko.to redirector image (deployik app "luko")
 ```
 
-Tagged releases publish the cross-platform archives and update
-`FixIt-Technologies/homebrew-tap` automatically. Subsequent upgrades use:
+## Extending
 
-```sh
-brew upgrade --cask vybava
-```
-
-`install` defaults to the `recommended` group when no selector is supplied.
-Selectors can be mixed:
-
-```sh
-vybava install memorylint prm
-vybava install recommended experimental
-vybava install ai-git --agent codex
-```
-
-Skills support `--agent claude`, `--agent codex`, or `--agent all`. The default
-scope is `user`; use `--scope project` for repository-local installation. Use
-`--dry-run` to preview mutations and `--json` for agent/automation consumption.
-
-Installed applets are lightweight links to the `vybava` executable. Therefore
-both forms are equivalent after installing `memorylint`:
-
-```sh
-vybava memory lint .
-memorylint .
-```
-
-## Memorylint
-
-Memorylint understands Obsidian-style Markdown and checks:
-
-- required YAML frontmatter and allowed memory types;
-- kebab-case filenames and duplicate memory names;
-- memory/index line caps and per-home note ceilings (15 personal, 30 team);
-- lifecycle: `provisional` notes must carry `expires: YYYY-MM-DD`, promoted ones
-  must drop it, and an expired provisional is flagged deletable on sight;
-- notes with no `last-used`/`last-verified` signal for 90 days, as eviction
-  candidates — memory that never changed behaviour is context tax;
-- missing index targets and dangling `[[wikilinks]]`;
-- memories missing from their local `MEMORY.md` index;
-- email/IP fixture values that are not explicitly allowlisted.
-
-Beyond checking, it maintains memory homes:
-
-```sh
-memorylint check <home>                 # the rules above
-memorylint fix [--dry-run] <home>       # normalize notes onto the flat v2 schema
-memorylint new --home <home> --type project --name project-topic --description "Use when …"
-memorylint new --provisional …          # status: provisional + expires 60 days out
-memorylint reindex [--write] <home>     # render MEMORY.md deterministically
-memorylint refs [--bare] <home> <file>… # find references to notes that no longer exist
-memorylint graph [--similar] <home>…    # wikilink graph, or likely-duplicate pairs
-memorylint hook                         # run as a Claude Code / Codex write hook
-```
-
-`reindex --team-index <path>` adds the routing line pointing at the companion
-home, which is what keeps a personal index telling readers where project and
-reference memory lives. Every command above honours `--json`.
-
-`check` only ever walks the home, so it cannot see a source comment or a design
-doc pointing at a note that has been merged away — `refs` covers that half.
-`--bare` widens it from `<home>/<note>.md` paths to unqualified `<note>.md`
-names.
-
-### Write hooks
-
-`memorylint hook` reads a Claude Code or Codex hook payload on stdin, exits 0
-for anything outside a memory home, and exits 2 to refuse the write. Register it
-pre- and post-write in `~/.claude/settings.json`, `~/.codex/hooks.json`, and the
-equivalents inside a repo that carries a committed team home.
-
-It refuses two things:
-
-- **secrets**, before they are written; and
-- **the Edit/Write tools inside the agent-managed home**
-  (`~/.claude/projects/<slug>/memory/`). Claude Code normalizes frontmatter it
-  writes there, silently reverting the flat v2 properties to a nested
-  `metadata:` envelope and stamping `originSessionId`/`modified`. That rewrite
-  lands *after* the post-write hook, so nothing can detect it in-session — the
-  only reliable defence is to refuse the tool and send the caller to Bash or
-  `memorylint new`. Writes to a committed team home are unaffected, and
-  `memorylint fix` repairs a note that already drifted.
-
-Place `.memorylint.yaml` at the lint root to override limits or allow fixtures:
-
-```yaml
-version: 1
-max_index_lines: 100
-max_entry_lines: 150
-allowed_emails:
-  - qa-*@example.test
-allowed_ips:
-  - 192.0.2.*
-allowed_values:
-  - fixture-token-value
-ignore:
-  - archive/**
-```
-
-## Extending Výbava
-
-See [`docs/decisions/0001-modular-catalog.md`](docs/decisions/0001-modular-catalog.md).
-The short version: implement or add one payload, register one item, and add its
-ID to a group only when the preset should include it. Catalog validation and CI
-catch broken sources, group references, duplicate IDs, and invalid statuses.
+One payload + one catalog entry = one package; presets are one more catalog
+line. Contract: [docs/decisions/0001-modular-catalog.md](docs/decisions/0001-modular-catalog.md)
+· checklist: [CONTRIBUTING.md](CONTRIBUTING.md) · releases: [docs/homebrew.md](docs/homebrew.md).
