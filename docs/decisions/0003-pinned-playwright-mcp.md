@@ -51,3 +51,21 @@ cache directory, and an install lock that always terminates with an explanation.
 - Projects that run Playwright directly (`playwright test`) bypass `pwmcp`
   entirely; `pwmcp env` emits the `PLAYWRIGHT_BROWSERS_PATH` export that points
   those runs at the same registry.
+
+## Scope note (added after the browser research)
+
+The pin covers the MCP **server** and the browser used for deterministic
+automation and `playwright test`. It deliberately does **not** cover the browser
+used for vault-backed logins, which runs Helium via the onyx wrappers.
+
+Two reasons the pinned browser is wrong for that role. Google's own
+documentation says Chrome for Testing "should only be used to consume
+trustworthy content" and it never auto-updates — unacceptable for a browser
+handling credentials. And the pin cannot buy what that role needs anyway:
+sign-in gates key on *how* a browser was launched (`navigator.webdriver`,
+automation flags, a Playwright-owned process), not on which build it is, so no
+choice of pinned binary makes an automated sign-in succeed.
+
+The split is therefore by launch mode, not by product: pinned and
+Playwright-launched for reproducible automation, self-patching and
+normally-launched for anything that has to look like a human at a login form.
