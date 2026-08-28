@@ -161,6 +161,16 @@ func TestServerRuleAPI(t *testing.T) {
 		t.Fatalf("redirect: %d %q", redirect.StatusCode, loc)
 	}
 
+	// Trailing slash in the tail survives the roundtrip (path is not trimmed).
+	slashy, err := client.Get(ts.URL + "/sentry/foo/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer slashy.Body.Close()
+	if loc := slashy.Header.Get("Location"); loc != "https://sentry.example.com/issues/foo/" {
+		t.Fatalf("trailing slash lost: %q", loc)
+	}
+
 	// Mint of a rule-covered URL returns the rule form, no code.
 	resp, body = ruleAPICall(t, ts, "POST", "/api/mint", `{"url":"https://sentry.example.com/issues/777"}`, "sekrit")
 	var mint mintResponse

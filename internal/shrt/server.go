@@ -218,10 +218,18 @@ type tokenIssueResponse struct {
 }
 
 func (s *Server) handleTokenList(w http.ResponseWriter, _ *http.Request, _ string) {
+	if s.Tokens == nil {
+		http.Error(w, "tokens unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	writeAPIJSON(w, map[string]any{"tokens": s.Tokens.List()})
 }
 
 func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request, _ string) {
+	if s.Tokens == nil {
+		http.Error(w, "tokens unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	var req tokenIssueRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -241,6 +249,10 @@ func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request, _ stri
 }
 
 func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request, _ string) {
+	if s.Tokens == nil {
+		http.Error(w, "tokens unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	name := r.PathValue("name")
 	err := s.Tokens.Revoke(name)
 	if errors.Is(err, ErrTokenNotFound) {
@@ -261,10 +273,18 @@ type ruleRequest struct {
 }
 
 func (s *Server) handleRuleList(w http.ResponseWriter, _ *http.Request, _ string) {
+	if s.Rules == nil {
+		http.Error(w, "rules unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	writeAPIJSON(w, map[string]any{"rules": s.Rules.List()})
 }
 
 func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request, who string) {
+	if s.Rules == nil {
+		http.Error(w, "rules unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	var req ruleRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -284,6 +304,10 @@ func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request, who st
 }
 
 func (s *Server) handleRuleUpdate(w http.ResponseWriter, r *http.Request, who string) {
+	if s.Rules == nil {
+		http.Error(w, "rules unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	var req ruleRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
@@ -303,6 +327,10 @@ func (s *Server) handleRuleUpdate(w http.ResponseWriter, r *http.Request, who st
 }
 
 func (s *Server) handleRuleDelete(w http.ResponseWriter, r *http.Request, who string) {
+	if s.Rules == nil {
+		http.Error(w, "rules unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	name := r.PathValue("name")
 	err := s.Rules.Delete(name)
 	if errors.Is(err, ErrRuleNotFound) {
@@ -339,9 +367,11 @@ func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Dynamic rules: /<name>[/tail]. Names are validated to never collide
-	// with reserved segments or code-shaped strings, so order is safe.
+	// with reserved segments or code-shaped strings, so order is safe. The
+	// tail comes from the UNTRIMMED path — a trailing slash is part of the
+	// target URL and must survive the roundtrip.
 	if s.Rules != nil {
-		name, tail, _ := strings.Cut(path, "/")
+		name, tail, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		if rule, ok := s.Rules.Get(name); ok {
 			long := ExpandDynamic(rule, tail)
 			if q := r.URL.RawQuery; q != "" {

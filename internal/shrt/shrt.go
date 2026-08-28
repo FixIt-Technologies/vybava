@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -180,20 +181,26 @@ func OSC8(label, target string) string {
 
 // --- dynamic-rule API client + local cache -------------------------------
 
-// RuleCachePath is where the CLI caches the server's dynamic rules for
-// offline matching.
-func RuleCachePath() (string, error) {
+// RuleCachePath is where the CLI caches a redirector's dynamic rules for
+// offline matching — one file PER ORIGIN, so a staging --base never
+// overwrites the production cache.
+func RuleCachePath(origin string) (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "shrt", "rules.json"), nil
+	host := origin
+	if u, err := url.Parse(origin); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	host = strings.NewReplacer("/", "_", ":", "_").Replace(host)
+	return filepath.Join(dir, "shrt", "rules-"+host+".json"), nil
 }
 
-// LoadRuleCache reads the cached rules; a missing or corrupt cache is just an
-// empty list — the mint path self-heals online.
-func LoadRuleCache() []Rule {
-	path, err := RuleCachePath()
+// LoadRuleCache reads the origin's cached rules; a missing or corrupt cache
+// is just an empty list — the mint path self-heals online.
+func LoadRuleCache(origin string) []Rule {
+	path, err := RuleCachePath(origin)
 	if err != nil {
 		return nil
 	}
@@ -208,9 +215,9 @@ func LoadRuleCache() []Rule {
 	return rules
 }
 
-// SaveRuleCache writes the rule cache; failures are non-fatal for callers.
-func SaveRuleCache(rules []Rule) error {
-	path, err := RuleCachePath()
+// SaveRuleCache writes the origin's rule cache.
+func SaveRuleCache(origin string, rules []Rule) error {
+	path, err := RuleCachePath(origin)
 	if err != nil {
 		return err
 	}
@@ -263,7 +270,9 @@ func (c Client) apiDo(method, path string, body any) ([]byte, int, error) {
 	return payload, resp.StatusCode, nil
 }
 
-// FetchRules lists the server's dynamic rules and refreshes the local cache.
+// FetchRules lists the server's dynamic rules. Callers that want the offline
+// cache updated call SaveRuleCache themselves and report failures — a silent
+// half-refresh must not masquerade as success.
 func (c Client) FetchRules() ([]Rule, error) {
 	payload, _, err := c.apiDo(http.MethodGet, "/api/rules", nil)
 	if err != nil {
@@ -275,7 +284,6 @@ func (c Client) FetchRules() ([]Rule, error) {
 	if err := json.Unmarshal(payload, &out); err != nil {
 		return nil, err
 	}
-	_ = SaveRuleCache(out.Rules)
 	return out.Rules, nil
 }
 
@@ -289,8 +297,6 @@ func (c Client) CreateRule(name, prefix string) (Rule, error) {
 	if err := json.Unmarshal(payload, &rule); err != nil {
 		return Rule{}, err
 	}
-	_, fetchErr := c.FetchRules()
-	_ = fetchErr // cache refresh is best-effort; the rule itself succeeded
 	return rule, nil
 }
 
@@ -304,19 +310,13 @@ func (c Client) UpdateRule(name, prefix string) (Rule, error) {
 	if err := json.Unmarshal(payload, &rule); err != nil {
 		return Rule{}, err
 	}
-	_, fetchErr := c.FetchRules()
-	_ = fetchErr
 	return rule, nil
 }
 
-// DeleteRule removes a rule server-side and refreshes the cache.
+// DeleteRule removes a rule server-side.
 func (c Client) DeleteRule(name string) error {
-	if _, _, err := c.apiDo(http.MethodDelete, "/api/rules/"+name, nil); err != nil {
-		return err
-	}
-	_, fetchErr := c.FetchRules()
-	_ = fetchErr
-	return nil
+	_, _, err := c.apiDo(http.MethodDelete, "/api/rules/"+name, nil)
+	return err
 }
 
 // IssueToken mints a named member token (admin only). The returned value is

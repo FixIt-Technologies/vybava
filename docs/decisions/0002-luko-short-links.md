@@ -18,7 +18,7 @@ layer: a public redirector on **luko.to** plus a `shrt` applet that every agent
 | 1 | Custom Warp parsing? | No — URL-layer fix | Warp link patterns are built-in only (warpdotdev/Warp#950 open); OSC 8 works in Warp but Claude Code doesn't emit it (anthropics/claude-code#13008, #54606). |
 | 2 | Host | Real public domain **luko.to** (user-purchased) | Works off-mesh and on phone, normal DNS, real TLS; single-label fake hosts were unverified in Warp and dotted mesh names need per-machine DNS. |
 | 3 | Reachability | Public DNS, HTTPS | Follows from 2; no /etc/hosts or mesh-DNS maintenance. |
-| 4 | Link shape | Per-domain static rewrites + minted tails | `luko.to/gh/fixit/1088` is readable and derivable offline; everything else gets an idempotent minted code (`luko.to/<7-char hash>`) that is permanent so old scrollback keeps working. |
+| 4 | Link shape | Static rewrites + DYNAMIC prefix rules + minted tails (revised 2026-08-28) | `luko.to/gh/fixit/1088` stays compiled-in; `shrt rule add` creates server-owned prefix rules (`luko.to/sentry/123`) live without a deploy, cached per-origin for offline use; everything else gets an idempotent permanent code. |
 | 5 | Gating | Open redirects, authed minting | Targets are GitHub-auth-gated or mesh-only; a guessed path leaks only a repo path. Minting requires a bearer token (onyx-held). |
 | 6 | Minting interface | vybava applet `shrt` + one global CLAUDE.md line | Works for Claude, Codex, any AI, and humans; no per-session MCP context cost. `shrt --osc8` covers label links from Bash output. |
 | 7 | Shortening policy | Agents run EVERY printed URL through `shrt`; the CLI decides (revised 2026-08-28) | No judgment left to the agent — `shrt` returns URLs under 40 chars unchanged (below that nothing wraps even in ~55-col panes), so piping everything is always safe. |
@@ -51,9 +51,10 @@ mint namespace are shared team-wide by design — one vocabulary.
 ## Architecture notes
 
 - `internal/shrt/` owns everything; CLI wiring stays thin per 0001.
-- `rules.go` is the single source of truth for static rewrites, used by both
-  the CLI (offline shorten) and the server (expand). Server and CLI ship from
-  the same commit; a server that doesn't know an alias 404s loudly.
+- `rules.go` is the source of truth for COMPILED static rewrites (CLI and
+  server ship from the same commit); dynamic prefix rules live server-side in
+  `rules.json` with the server authoritative and the CLI holding a per-origin
+  offline cache that self-heals through the mint path.
 - Minted store: append-only JSONL + in-memory map; code = first 7 chars of
   base32(sha256(url)) — deterministic, so minting is idempotent with no
   read-before-write coordination.

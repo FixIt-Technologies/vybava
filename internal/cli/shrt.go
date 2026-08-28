@@ -26,7 +26,11 @@ func (rt *runtime) shrtCommand(use string) *cobra.Command {
 			"macOS Keychain, service \"luko.to\").",
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			client := shrt.Client{Base: base, Token: shrt.LoadToken(), DynRules: shrt.LoadRuleCache()}
+			origin := base
+			if origin == "" {
+				origin = shrt.DefaultBase
+			}
+			client := shrt.Client{Base: base, Token: shrt.LoadToken(), DynRules: shrt.LoadRuleCache(origin)}
 			var firstErr error
 			var results []shrt.Result
 			for _, arg := range args {
@@ -78,6 +82,18 @@ func (rt *runtime) shrtRuleCommand() *cobra.Command {
 		}
 		return shrt.DefaultBase
 	}
+	// refreshCache pulls the server's rules into the origin-scoped offline
+	// cache and REPORTS failure — a stale cache silently claiming freshness
+	// is worse than a visible warning.
+	refreshCache := func(client shrt.Client) {
+		rules, err := client.FetchRules()
+		if err == nil {
+			err = shrt.SaveRuleCache(displayBase(), rules)
+		}
+		if err != nil {
+			fmt.Fprintf(rt.stderr, "warning: offline rule cache not refreshed: %v\n", err)
+		}
+	}
 	command := &cobra.Command{
 		Use:   "rule",
 		Short: "Manage dynamic prefix rules (server-side, cached locally)",
@@ -93,10 +109,12 @@ func (rt *runtime) shrtRuleCommand() *cobra.Command {
 		Short: "Create a rule",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			rule, err := newClient().CreateRule(args[0], args[1])
+			client := newClient()
+			rule, err := client.CreateRule(args[0], args[1])
 			if err != nil {
 				return err
 			}
+			refreshCache(client)
 			if rt.json {
 				return writeJSON(rt.stdout, rule)
 			}
@@ -109,10 +127,12 @@ func (rt *runtime) shrtRuleCommand() *cobra.Command {
 		Short: "Replace a rule's prefix",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
-			rule, err := newClient().UpdateRule(args[0], args[1])
+			client := newClient()
+			rule, err := client.UpdateRule(args[0], args[1])
 			if err != nil {
 				return err
 			}
+			refreshCache(client)
 			if rt.json {
 				return writeJSON(rt.stdout, rule)
 			}
@@ -126,8 +146,13 @@ func (rt *runtime) shrtRuleCommand() *cobra.Command {
 		Short:   "Delete a rule (existing short links under it stop resolving)",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			if err := newClient().DeleteRule(args[0]); err != nil {
+			client := newClient()
+			if err := client.DeleteRule(args[0]); err != nil {
 				return err
+			}
+			refreshCache(client)
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]string{"deleted": args[0]})
 			}
 			_, err := fmt.Fprintf(rt.stdout, "rule %s deleted\n", args[0])
 			return err
@@ -138,9 +163,13 @@ func (rt *runtime) shrtRuleCommand() *cobra.Command {
 		Short: "List rules (refreshes the local cache)",
 		Args:  cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
-			rules, err := newClient().FetchRules()
+			client := newClient()
+			rules, err := client.FetchRules()
 			if err != nil {
 				return err
+			}
+			if err := shrt.SaveRuleCache(displayBase(), rules); err != nil {
+				fmt.Fprintf(rt.stderr, "warning: offline rule cache not refreshed: %v\n", err)
 			}
 			if rt.json {
 				return writeJSON(rt.stdout, rules)
@@ -243,6 +272,9 @@ func (rt *runtime) shrtTokenCommand() *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			if err := newClient().RevokeToken(args[0]); err != nil {
 				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]string{"revoked": args[0]})
 			}
 			_, err := fmt.Fprintf(rt.stdout, "token %s revoked\n", args[0])
 			return err
