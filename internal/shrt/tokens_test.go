@@ -103,3 +103,29 @@ func TestServerMemberTokens(t *testing.T) {
 		t.Fatalf("revoked member mint must 401, got %d", resp.StatusCode)
 	}
 }
+
+func TestTokenNameValidation(t *testing.T) {
+	s, err := OpenTokenStore(filepath.Join(t.TempDir(), "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "admin" must never be issuable — a member identified as "admin" would
+	// satisfy the adminOnly gate (privilege escalation).
+	for _, bad := range []string{"admin", "gh", "healthz", "UPPER", "x", "abcdefg"} {
+		if _, err := s.Issue(bad); err == nil {
+			t.Errorf("Issue(%q) must be rejected", bad)
+		}
+	}
+}
+
+func TestServerRejectsAdminNamedToken(t *testing.T) {
+	server, ts := newRuleTestServer(t)
+	tokens, err := OpenTokenStore(filepath.Join(t.TempDir(), "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.Tokens = tokens
+	if resp, _ := ruleAPICall(t, ts, "POST", "/api/tokens", `{"name":"admin"}`, "sekrit"); resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("issuing token named admin must 400, got %d", resp.StatusCode)
+	}
+}

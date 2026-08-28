@@ -225,7 +225,7 @@ func (s *Server) handleTokenList(w http.ResponseWriter, _ *http.Request, _ strin
 	writeAPIJSON(w, map[string]any{"tokens": s.Tokens.List()})
 }
 
-func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request, _ string) {
+func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request, who string) {
 	if s.Tokens == nil {
 		http.Error(w, "tokens unavailable", http.StatusServiceUnavailable)
 		return
@@ -244,11 +244,11 @@ func (s *Server) handleTokenIssue(w http.ResponseWriter, r *http.Request, _ stri
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.logf("token issued: %s", req.Name)
+	s.logf("token issued: %s (by %s)", req.Name, who)
 	writeAPIJSON(w, tokenIssueResponse{Name: strings.TrimSpace(req.Name), Token: value})
 }
 
-func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request, _ string) {
+func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request, who string) {
 	if s.Tokens == nil {
 		http.Error(w, "tokens unavailable", http.StatusServiceUnavailable)
 		return
@@ -263,7 +263,7 @@ func (s *Server) handleTokenRevoke(w http.ResponseWriter, r *http.Request, _ str
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.logf("token revoked: %s", name)
+	s.logf("token revoked: %s (by %s)", name, who)
 	w.WriteHeader(http.StatusNoContent)
 }
 

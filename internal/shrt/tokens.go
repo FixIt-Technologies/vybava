@@ -88,6 +88,11 @@ func (s *TokenStore) Issue(name string) (string, error) {
 	if err := ValidateRuleName(name); err != nil { // same shape: short, lowercase, no collisions
 		return "", fmt.Errorf("token name: %w", err)
 	}
+	// The admin identity is derived from the identity STRING — a member
+	// token named "admin" would satisfy adminOnly. Ban the name outright.
+	if name == adminIdentity {
+		return "", fmt.Errorf("token name %q is reserved for the env credential", name)
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", err
