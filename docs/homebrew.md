@@ -1,46 +1,45 @@
 # Homebrew publishing
 
 Výbava publishes precompiled archives with GoReleaser and installs them as a
-Homebrew cask. GoReleaser's legacy binary-formula publisher is intentionally
-not used.
+Homebrew cask. Repo, release assets, and tap are all public — installs need no
+authentication.
 
-## Release flow
+## Cutting a release
+
+```sh
+scripts/release.sh          # minor bump (default)
+scripts/release.sh patch    # or major
+```
+
+The script releases from a clean, synced `main`: it computes the next tag,
+runs `goreleaser check` when available, tags, pushes, and watches the Release
+workflow to green.
+
+## What the workflow does
 
 1. A `v*` tag starts `.github/workflows/release.yml`.
-2. GoReleaser builds archives and checksums and creates the GitHub release.
-3. GoReleaser generates `Casks/vybava.rb` and pushes it directly to
-   `FixIt-Technologies/homebrew-tap` using the repository-scoped SSH deploy key
-   held in the `TAP_DEPLOY_KEY` Actions secret.
-4. The tap's repository ruleset allows only deploy keys to bypass its normal
-   pull-request requirement. Human changes still use PRs.
+2. GoReleaser builds archives + checksums and creates the GitHub release.
+3. GoReleaser generates `Casks/vybava.rb` (plain public download URL, verified
+   against this repo) and pushes it to `FixIt-Technologies/homebrew-tap` using
+   the repository-scoped SSH deploy key in the `TAP_DEPLOY_KEY` Actions secret.
+4. The tap's ruleset lets only deploy keys bypass its PR requirement; human
+   changes to the tap still go through PRs.
 
 The deploy key has write access only to `homebrew-tap`. Do not replace it with
 a personal access token. Rotate it by adding a new write deploy key to the tap,
-replacing the `TAP_DEPLOY_KEY` secret in `vybava`, running a release, and then
-deleting the old deploy key.
-
-## Private download contract
-
-Homebrew authenticates to reach the tap:
-
-- Git credentials clone the private tap. `gh auth setup-git` configures this.
-- `HOMEBREW_GITHUB_API_TOKEN` is what the generated cask presents when it
-  downloads the release asset. Since `vybava` became public those assets are
-  reachable without a token, so this is belt-and-braces rather than required —
-  the install path has not been re-tested without it, and the tap itself is
-  still private, so the Git credential above is not optional.
-
-Homebrew scrubs sensitive environment variables while loading a cask. The
-generated cask therefore uses a custom download strategy that reads the token
-only when the download begins. Do not simplify it to a static `url.headers`
-entry; that breaks on current Homebrew.
+replacing the `TAP_DEPLOY_KEY` secret in `vybava`, running a release, then
+deleting the old key.
 
 ## Install and verify
 
 ```sh
-gh auth setup-git
-export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
 brew install --cask FixIt-Technologies/tap/vybava
 vybava --version
 vybava doctor
 ```
+
+Upgrades: `brew upgrade --cask vybava`.
+
+History: until 2026-08-28 the tap was private and the cask used a token-gated
+custom download strategy (`HOMEBREW_GITHUB_API_TOKEN`). Casks generated since
+use a plain URL; if an old install complains about a missing token, upgrade.

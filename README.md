@@ -19,12 +19,9 @@ presets in the catalog — never code.
 
 ## Install
 
-Homebrew (repo and release assets are public; the tap is still private, so
-Homebrew needs Git credentials for it):
+Homebrew (everything is public — no authentication needed):
 
 ```sh
-gh auth setup-git
-export HOMEBREW_GITHUB_API_TOKEN="$(gh auth token)"
 brew install --cask FixIt-Technologies/tap/vybava
 ```
 
