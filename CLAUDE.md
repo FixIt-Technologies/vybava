@@ -1,36 +1,35 @@
 # Výbava
 
-Výbava is FixIt Technologies' modular distribution hub for small engineering
-utilities, reusable agent skills, and workstation diagnostics.
+FixIt Technologies' modular distribution hub for small engineering utilities,
+reusable agent skills, and workstation diagnostics. Per-tool references live
+in `docs/`; lessons in `.claude/memory/MEMORY.md`.
 
 ## Architecture laws
 
-- `catalog/catalog.yaml` is the package and group source of truth.
-- One item owns one capability. Groups only compose item IDs; group behavior is
-  never hard-coded into the CLI.
-- Agent skills have one canonical `SKILL.md` payload under `skills/<id>/`.
-  Installer adapters copy that payload into Claude Code or Codex homes.
-- Human-readable output is the default. Every command used by automation must
-  support stable JSON and non-interactive execution.
-- The `vybava` binary is multicall: installed applets are links to the same
-  executable and dispatch by `argv[0]`.
-- Utility implementations stay in focused `internal/<utility>/` packages.
-  CLI wiring must not contain domain logic.
-- Tagged releases publish a private Homebrew cask through the repository-scoped
-  tap deploy key. Read `docs/homebrew.md` before changing release distribution.
-- Adding a package should normally require its payload/implementation and one
-  catalog entry. Adding it to a preset is one additional catalog line.
+- `catalog/catalog.yaml` is the package and group source of truth. One item
+  owns one capability; groups only compose item IDs — group behavior is never
+  hard-coded into the CLI. Adding a package = its payload + one catalog entry;
+  a preset membership is one more catalog line.
+- The `vybava` binary is multicall: installed applets are links dispatching by
+  `argv[0]`. Implementations stay in focused `internal/<id>/` packages; CLI
+  wiring carries no domain logic.
+- Agent skills have ONE canonical `SKILL.md` under `skills/<id>/`; installer
+  adapters copy it into Claude Code or Codex homes — never per-agent forks.
+- Human-readable output is the default; every automation-facing command must
+  support stable `--json` and non-interactive execution.
+- Tagged releases publish a Homebrew cask via the tap deploy key — read
+  `docs/homebrew.md` before touching release distribution.
+- The repo-root `Dockerfile` is the luko.to redirector image (deployik app
+  `luko`, build context = Dockerfile's directory, so it must stay at the
+  root). `internal/shrt/rules.go` ships in BOTH the CLI and the server —
+  changing it means redeploying luko. Ops details: `docs/shrt.md`.
 
 ## Commands
 
 ```sh
-go test ./...
-go vet ./...
+go test ./...  &&  go vet ./...
 go run ./cmd/vybava catalog list
 go run ./cmd/vybava doctor
-go run ./cmd/vybava memory lint <path>
-go run ./cmd/vybava memory refs <home> <file>...
 ```
 
-Run `go fmt ./...` after Go edits. Use Go for utilities and system automation;
-do not introduce Python helpers.
+Run `go fmt ./...` after Go edits. Utilities are Go — never Python helpers.
