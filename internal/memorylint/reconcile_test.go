@@ -938,7 +938,7 @@ func TestNewNoteProvisionalIsBornWithExpires(t *testing.T) {
 func TestFixCarriesTheLifecycleFieldsThrough(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "project-lesson.md")
-	if err := os.WriteFile(path, []byte("---\nname: project-lesson\ndescription: Use when x.\ntype: project\nstatus: provisional\nexpires: 2999-01-02\n---\n\nBody.\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("---\nname: project-lesson\ndescription: Use when x.\ntype: project\nstatus: provisional\nexpires: 2999-01-02\nlast-used: 2999-01-03\n---\n\nBody.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rendered, _, err := Normalize(path)
@@ -953,6 +953,12 @@ func TestFixCarriesTheLifecycleFieldsThrough(t *testing.T) {
 	}
 	if !strings.Contains(string(rendered), "2999-01-02") {
 		t.Errorf("fix must keep the expires date: %q", rendered)
+	}
+	if got := strings.Count(string(rendered), "last-used:"); got != 1 {
+		t.Errorf("fix must carry last-used through exactly once, got %d: %q", got, rendered)
+	}
+	if !strings.Contains(string(rendered), "2999-01-03") {
+		t.Errorf("fix must keep the last-used date: %q", rendered)
 	}
 }
 

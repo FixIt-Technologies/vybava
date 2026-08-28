@@ -24,6 +24,7 @@ type properties struct {
 	Expires      string   `yaml:"expires,omitempty"`
 	Tags         []string `yaml:"tags,omitempty"`
 	Aliases      []string `yaml:"aliases,omitempty"`
+	LastUsed     string   `yaml:"last-used,omitempty"`
 	LastVerified string   `yaml:"last-verified,omitempty"`
 }
 
@@ -37,6 +38,7 @@ type legacyEnvelope struct {
 	Expires      string   `yaml:"expires"`
 	Tags         []string `yaml:"tags"`
 	Aliases      []string `yaml:"aliases"`
+	LastUsed     string   `yaml:"last-used"`
 	LastVerified string   `yaml:"last-verified"`
 	Metadata     struct {
 		Type     string   `yaml:"type"`
@@ -78,7 +80,7 @@ func Normalize(path string) ([]byte, bool, error) {
 	if err := yaml.Unmarshal(front, &all); err != nil {
 		return nil, false, fmt.Errorf("invalid YAML: %w", err)
 	}
-	for _, k := range []string{"name", "description", "type", "status", "expires", "tags", "aliases", "last-verified", "metadata"} {
+	for _, k := range []string{"name", "description", "type", "status", "expires", "tags", "aliases", "last-used", "last-verified", "metadata"} {
 		delete(all, k)
 	}
 
@@ -90,6 +92,7 @@ func Normalize(path string) ([]byte, bool, error) {
 		Expires:      legacy.Expires,
 		Tags:         firstNonEmptySlice(legacy.Tags, legacy.Metadata.Tags),
 		Aliases:      legacy.Aliases,
+		LastUsed:     legacy.LastUsed,
 		LastVerified: legacy.LastVerified,
 	}
 	// The schema requires name == filename stem, and `fix` is the documented
