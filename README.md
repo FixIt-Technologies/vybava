@@ -36,7 +36,8 @@ go build -o ./bin/vybava ./cmd/vybava
 ./bin/vybava install recommended
 ```
 
-`install` takes item or group selectors and supports `--agent claude|codex|all`,
+`install` takes item or group selectors (default: the `recommended` group)
+and supports `--agent claude|codex|all`,
 `--scope user|project`, `--dry-run`, and `--json`. Installed applets are links
 to the `vybava` binary, so `vybava memory lint .` and `memorylint .` are
 equivalent.

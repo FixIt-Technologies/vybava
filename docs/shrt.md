@@ -32,13 +32,15 @@ gateway (`--via`, default 10.8.4.1) so the request provably arrives from the
 WG address, and the token is never displayed. `admin` is unregistrable.
 
 Agents adopt it with one global instruction line:
-`Print every URL through `shrt <url>` — bare, alone on its own line.`
+``Print every URL through `shrt <url>` — bare, alone on its own line.``
 
 ## Dynamic rules (shared team vocabulary, full CRUD)
 
 ```sh
 shrt rule add sentry https://sentry.dev.lovinka.com/organizations/lovinka/issues/
-shrt rule list | update | rm      # any member token; prefixes must end with "/"
+shrt rule list                    # any member token
+shrt rule update <name> <prefix>  # prefixes must end with "/"
+shrt rule rm <name>
 ```
 
 Rules are server-owned and live everywhere immediately;
