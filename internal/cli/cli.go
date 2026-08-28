@@ -328,12 +328,13 @@ func (rt *runtime) memoryFixCommand() *cobra.Command {
 
 func (rt *runtime) memoryNewCommand() *cobra.Command {
 	var home, noteType, name, description string
+	var provisional bool
 	command := &cobra.Command{
 		Use:   "new",
 		Short: "Scaffold a note that already satisfies the schema",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			path, err := memorylint.NewNote(home, noteType, name, description)
+			path, err := memorylint.NewNote(home, noteType, name, description, provisional)
 			if err != nil {
 				return err
 			}
@@ -348,6 +349,7 @@ func (rt *runtime) memoryNewCommand() *cobra.Command {
 	command.Flags().StringVar(&noteType, "type", "", "user, feedback, project or reference")
 	command.Flags().StringVar(&name, "name", "", "note slug, which is also its filename stem")
 	command.Flags().StringVar(&description, "description", "", "one-line trigger description")
+	command.Flags().BoolVar(&provisional, "provisional", false, "born provisional: status provisional with expires 60 days out")
 	return command
 }
 

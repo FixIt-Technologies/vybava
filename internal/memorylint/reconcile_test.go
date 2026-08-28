@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The exact shape Claude Code writes back when its Edit tool touches a note in
@@ -269,18 +270,18 @@ func TestNewNoteStaysInsideTheHome(t *testing.T) {
 	if err := os.MkdirAll(victim, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewNote(home, "project", "../victim/project-pwned", "Use when x."); err == nil {
+	if _, err := NewNote(home, "project", "../victim/project-pwned", "Use when x.", false); err == nil {
 		t.Fatal("a traversing slug must be refused")
 	}
 	if entries, _ := os.ReadDir(victim); len(entries) != 0 {
 		t.Fatal("a note was written outside the home")
 	}
 	for _, bad := range []string{"Project-Upper", "project name", "project/sub", ".."} {
-		if _, err := NewNote(home, "project", bad, "Use when x."); err == nil {
+		if _, err := NewNote(home, "project", bad, "Use when x.", false); err == nil {
 			t.Errorf("slug %q must be refused", bad)
 		}
 	}
-	if _, err := NewNote(home, "project", "project-good", "Use when good."); err != nil {
+	if _, err := NewNote(home, "project", "project-good", "Use when good.", false); err != nil {
 		t.Errorf("a valid slug must be accepted: %v", err)
 	}
 }
@@ -478,10 +479,10 @@ func TestNewNoteRefusesANameTheLinterWouldReject(t *testing.T) {
 	home := t.TempDir()
 	// `topic.md` does not match the `<type>-<slug>.md` filename rule, so `new`
 	// must not be able to create a note `check` then complains about.
-	if _, err := NewNote(home, "project", "topic", "Use when x."); err == nil {
+	if _, err := NewNote(home, "project", "topic", "Use when x.", false); err == nil {
 		t.Error("a name without the type prefix must be refused")
 	}
-	if _, err := NewNote(home, "project", "project-topic", "Use when x."); err != nil {
+	if _, err := NewNote(home, "project", "project-topic", "Use when x.", false); err != nil {
 		t.Errorf("a conventional name must be accepted: %v", err)
 	}
 }
@@ -526,7 +527,7 @@ func TestConfigErrorsPropagateInsteadOfSilentlyUsingDefaults(t *testing.T) {
 	if _, err := Reindex(home, "", true); err == nil {
 		t.Error("reindex must refuse an unsupported config version")
 	}
-	if _, err := NewNote(home, "project", "project-b", "Use when b."); err == nil {
+	if _, err := NewNote(home, "project", "project-b", "Use when b.", false); err == nil {
 		t.Error("new must refuse an unsupported config version")
 	}
 	if _, err := os.Stat(filepath.Join(home, "MEMORY.md")); err == nil {
@@ -667,7 +668,7 @@ func TestNewNoteRefusesToFollowAnEntryCreatedUnderIt(t *testing.T) {
 	if err := os.WriteFile(target, []byte("existing\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewNote(home, "project", "project-taken", "Use when x."); err == nil {
+	if _, err := NewNote(home, "project", "project-taken", "Use when x.", false); err == nil {
 		t.Fatal("an existing path must not be overwritten")
 	}
 	got, err := os.ReadFile(target)
@@ -685,7 +686,7 @@ func TestFilenameRuleFollowsTheHomesConfiguredTypes(t *testing.T) {
 		[]byte("version: 1\nallowed_types: [user, feedback, project, reference, runbook]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	path, err := NewNote(home, "runbook", "runbook-topic", "Use when topic.")
+	path, err := NewNote(home, "runbook", "runbook-topic", "Use when topic.", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -901,5 +902,91 @@ func TestRefsSeesSubdirectoryNotesAndConfiguredTypes(t *testing.T) {
 	}
 	if !sawGone {
 		t.Errorf("a genuinely missing note must still be reported: %#v", report.Findings)
+	}
+}
+
+func TestNewNoteProvisionalIsBornWithExpires(t *testing.T) {
+	home := t.TempDir()
+	path, err := NewNote(home, "project", "project-fresh-lesson", "Use when x.", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "status: provisional") {
+		t.Errorf("a --provisional note must be born provisional: %q", raw)
+	}
+	want := time.Now().AddDate(0, 0, 60).Format("2006-01-02")
+	if !strings.Contains(string(raw), want) {
+		t.Errorf("expires must be today+60d (%s): %q", want, raw)
+	}
+	if err := os.WriteFile(filepath.Join(home, "MEMORY.md"),
+		[]byte("# Memory Index\n\n- [project-fresh-lesson](project-fresh-lesson.md) — Use when x.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Lint([]string{home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Findings) != 0 {
+		t.Errorf("a scaffolded provisional note must lint clean: %#v", report.Findings)
+	}
+}
+
+func TestFixCarriesTheLifecycleFieldsThrough(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "project-lesson.md")
+	if err := os.WriteFile(path, []byte("---\nname: project-lesson\ndescription: Use when x.\ntype: project\nstatus: provisional\nexpires: 2999-01-02\nlast-used: 2999-01-03\n---\n\nBody.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rendered, _, err := Normalize(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rendered), "status: provisional") {
+		t.Errorf("fix must not strip a provisional status: %q", rendered)
+	}
+	if got := strings.Count(string(rendered), "expires:"); got != 1 {
+		t.Errorf("fix must carry expires through exactly once, got %d: %q", got, rendered)
+	}
+	if !strings.Contains(string(rendered), "2999-01-02") {
+		t.Errorf("fix must keep the expires date: %q", rendered)
+	}
+	if got := strings.Count(string(rendered), "last-used:"); got != 1 {
+		t.Errorf("fix must carry last-used through exactly once, got %d: %q", got, rendered)
+	}
+	if !strings.Contains(string(rendered), "2999-01-03") {
+		t.Errorf("fix must keep the last-used date: %q", rendered)
+	}
+}
+
+func TestPostWriteAcceptsProvisionalNotes(t *testing.T) {
+	// A live provisional is a valid note, and an EXPIRED one is only an M013
+	// warning — deletable on sight is prune's job, not a reason to block a write.
+	home := t.TempDir()
+	mem := filepath.Join(home, ".claude", "memory")
+	if err := os.MkdirAll(mem, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(mem, "MEMORY.md"),
+		"# Memory Index\n\n- [project-live](project-live.md) — Use when x.\n- [project-expired](project-expired.md) — Use when x.\n")
+	live := filepath.Join(mem, "project-live.md")
+	write(live, "---\nname: project-live\ndescription: Use when x.\ntype: project\nstatus: provisional\nexpires: 2999-01-02\n---\n\nBody.\n")
+	expired := filepath.Join(mem, "project-expired.md")
+	write(expired, "---\nname: project-expired\ndescription: Use when x.\ntype: project\nstatus: provisional\nexpires: 2001-01-02\n---\n\nBody.\n")
+
+	for _, target := range []string{live, expired} {
+		payload := `{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"` + target + `"}}`
+		if got := RunHook(strings.NewReader(payload)); got.Block {
+			t.Errorf("a provisional note must not be refused (%s): %s", filepath.Base(target), got.Message)
+		}
 	}
 }

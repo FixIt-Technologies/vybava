@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -63,12 +64,16 @@ type Config struct {
 }
 
 type frontmatter struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
-	Type        string `yaml:"type"`
-	Status      string `yaml:"status"`
-	Metadata    struct {
-		Type string `yaml:"type"`
+	Name         string `yaml:"name"`
+	Description  string `yaml:"description"`
+	Type         string `yaml:"type"`
+	Status       string `yaml:"status"`
+	Expires      string `yaml:"expires"`
+	LastUsed     string `yaml:"last-used"`
+	LastVerified string `yaml:"last-verified"`
+	Metadata     struct {
+		Type     string `yaml:"type"`
+		Modified string `yaml:"modified"`
 	} `yaml:"metadata"`
 }
 
@@ -76,6 +81,7 @@ type entry struct {
 	path     string
 	relative string
 	name     string
+	noteType string
 	data     []byte
 }
 
@@ -247,9 +253,11 @@ func lintRoot(root string, config Config) ([]Finding, int, error) {
 			if !contains(config.AllowedTypes, parsed.Type) {
 				findings = append(findings, finding("M001", SeverityError, path, 1, "type %q is not allowed", parsed.Type))
 			}
-			if parsed.Status != "active" && parsed.Status != "superseded" {
-				findings = append(findings, finding("M001", SeverityError, path, 1, "status must be active or superseded"))
+			if parsed.Status != "active" && parsed.Status != "superseded" && parsed.Status != "provisional" {
+				findings = append(findings, finding("M001", SeverityError, path, 1, "status must be active, provisional or superseded"))
 			}
+			findings = append(findings, lifecycleFindings(path, parsed)...)
+			findings = append(findings, usageFindings(path, parsed)...)
 			stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 			if parsed.Name != "" && parsed.Name != stem {
 				findings = append(findings, finding("M001", SeverityError, path, 1, "name %q must match filename stem %q", parsed.Name, stem))
@@ -262,7 +270,7 @@ func lintRoot(root string, config Config) ([]Finding, int, error) {
 			findings = append(findings, finding("M004", SeverityError, path, 1, "memory has %d lines; maximum is %d", lines, config.MaxEntryLines))
 		}
 		findings = append(findings, fixtureFindings(path, data, config)...)
-		entries = append(entries, entry{path: path, relative: relative, name: parsed.Name, data: data})
+		entries = append(entries, entry{path: path, relative: relative, name: parsed.Name, noteType: parsed.Type, data: data})
 		return nil
 	})
 	if err != nil {
@@ -271,6 +279,7 @@ func lintRoot(root string, config Config) ([]Finding, int, error) {
 
 	findings = append(findings, linkFindings(root, entries, indexes)...)
 	findings = append(findings, identityFindings(entries)...)
+	findings = append(findings, ceilingFindings(root, entries)...)
 	return findings, files, nil
 }
 
@@ -416,6 +425,96 @@ func linkFindings(root string, entries []entry, indexes map[string][]byte) []Fin
 		}
 	}
 	return findings
+}
+
+// lifecycleFindings enforces the provisional lifecycle: a provisional note must
+// carry a well-formed expires date, promotion to any other status drops it, and
+// an expired provisional is deletable on sight — no re-litigation.
+func lifecycleFindings(path string, parsed frontmatter) []Finding {
+	if parsed.Status != "provisional" {
+		if parsed.Expires != "" {
+			return []Finding{finding("M012", SeverityError, path, 1, "expires is only valid on a provisional note; promotion drops it")}
+		}
+		return nil
+	}
+	if parsed.Expires == "" {
+		return []Finding{finding("M012", SeverityError, path, 1, "provisional note must carry expires: YYYY-MM-DD")}
+	}
+	if _, err := time.Parse("2006-01-02", parsed.Expires); err != nil {
+		return []Finding{finding("M012", SeverityError, path, 1, "expires %q is not a YYYY-MM-DD date", parsed.Expires)}
+	}
+	// Zero-padded ISO dates compare correctly as strings, and Format uses local
+	// time — so "today" flips exactly at the user's midnight, not UTC's.
+	if parsed.Expires < time.Now().Format("2006-01-02") {
+		return []Finding{finding("M013", SeverityWarning, path, 1, "expired provisional — deletable on sight (expired %s)", parsed.Expires)}
+	}
+	return nil
+}
+
+// Doctrine constants, deliberately not configurable: hitting a ceiling forces
+// consolidation or eviction, never a cap raise.
+const (
+	evictionWindowDays  = 90
+	personalNoteCeiling = 15
+	teamNoteCeiling     = 30
+)
+
+// usageFindings enforces the forgetting half of the lifecycle: a non-provisional
+// note whose most recent usage signal (last-used, last-verified, or the legacy
+// metadata.modified) is older than the eviction window is an eviction candidate.
+// A note carrying none of the three is skipped — no date is not evidence of
+// disuse, and guessing one would mark every legacy note for eviction at once.
+func usageFindings(path string, parsed frontmatter) []Finding {
+	var findings []Finding
+	if parsed.LastUsed != "" {
+		if _, err := time.Parse("2006-01-02", parsed.LastUsed); err != nil {
+			findings = append(findings, finding("M012", SeverityError, path, 1, "last-used %q is not a YYYY-MM-DD date", parsed.LastUsed))
+			return findings
+		}
+	}
+	if parsed.Status == "provisional" {
+		return findings // expires already bounds its life
+	}
+	newest := ""
+	for _, candidate := range []string{parsed.LastUsed, parsed.LastVerified, parsed.Metadata.Modified} {
+		if len(candidate) >= 10 {
+			candidate = candidate[:10] // metadata.modified is an RFC3339 stamp
+		}
+		if _, err := time.Parse("2006-01-02", candidate); err != nil {
+			continue
+		}
+		if candidate > newest {
+			newest = candidate
+		}
+	}
+	if newest == "" {
+		return findings
+	}
+	if newest < time.Now().AddDate(0, 0, -evictionWindowDays).Format("2006-01-02") {
+		findings = append(findings, finding("M014", SeverityWarning, path, 1, "unused for %dd — eviction candidate (last signal %s)", evictionWindowDays, newest))
+	}
+	return findings
+}
+
+// ceilingFindings enforces the note-count cap per home: every surviving note
+// competes with the actual rules for instruction-following budget, so a home
+// over its ceiling gets one home-level warning. A home holding only personal
+// types (user/feedback) is a personal home with the tighter ceiling.
+func ceilingFindings(root string, entries []entry) []Finding {
+	if len(entries) == 0 {
+		return nil
+	}
+	ceiling := personalNoteCeiling
+	for _, value := range entries {
+		if value.noteType != "user" && value.noteType != "feedback" {
+			ceiling = teamNoteCeiling
+			break
+		}
+	}
+	if len(entries) <= ceiling {
+		return nil
+	}
+	return []Finding{finding("M015", SeverityWarning, root, 0, "home holds %d notes; ceiling is %d — consolidate or evict, never raise the cap", len(entries), ceiling)}
 }
 
 func identityFindings(entries []entry) []Finding {

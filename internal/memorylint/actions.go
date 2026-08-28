@@ -21,8 +21,10 @@ type properties struct {
 	Description  string   `yaml:"description"`
 	Type         string   `yaml:"type"`
 	Status       string   `yaml:"status"`
+	Expires      string   `yaml:"expires,omitempty"`
 	Tags         []string `yaml:"tags,omitempty"`
 	Aliases      []string `yaml:"aliases,omitempty"`
+	LastUsed     string   `yaml:"last-used,omitempty"`
 	LastVerified string   `yaml:"last-verified,omitempty"`
 }
 
@@ -33,8 +35,10 @@ type legacyEnvelope struct {
 	Description  string   `yaml:"description"`
 	Type         string   `yaml:"type"`
 	Status       string   `yaml:"status"`
+	Expires      string   `yaml:"expires"`
 	Tags         []string `yaml:"tags"`
 	Aliases      []string `yaml:"aliases"`
+	LastUsed     string   `yaml:"last-used"`
 	LastVerified string   `yaml:"last-verified"`
 	Metadata     struct {
 		Type     string   `yaml:"type"`
@@ -76,7 +80,7 @@ func Normalize(path string) ([]byte, bool, error) {
 	if err := yaml.Unmarshal(front, &all); err != nil {
 		return nil, false, fmt.Errorf("invalid YAML: %w", err)
 	}
-	for _, k := range []string{"name", "description", "type", "status", "tags", "aliases", "last-verified", "metadata"} {
+	for _, k := range []string{"name", "description", "type", "status", "expires", "tags", "aliases", "last-used", "last-verified", "metadata"} {
 		delete(all, k)
 	}
 
@@ -85,8 +89,10 @@ func Normalize(path string) ([]byte, bool, error) {
 		Description:  legacy.Description,
 		Type:         firstNonEmpty(legacy.Type, legacy.Metadata.Type),
 		Status:       firstNonEmpty(legacy.Status, legacy.Metadata.Status),
+		Expires:      legacy.Expires,
 		Tags:         firstNonEmptySlice(legacy.Tags, legacy.Metadata.Tags),
 		Aliases:      legacy.Aliases,
+		LastUsed:     legacy.LastUsed,
 		LastVerified: legacy.LastVerified,
 	}
 	// The schema requires name == filename stem, and `fix` is the documented
@@ -176,8 +182,10 @@ func Fix(homes []string, dryRun bool) (changed []string, failures []string, err 
 // otherwise join straight out of it.
 var slugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
-// NewNote scaffolds a note that already satisfies the schema.
-func NewNote(home, noteType, name, description string) (string, error) {
+// NewNote scaffolds a note that already satisfies the schema. With provisional
+// it is born `status: provisional` with `expires` 60 days out, per the
+// lifecycle doctrine: a single-incident lesson must earn promotion to active.
+func NewNote(home, noteType, name, description string, provisional bool) (string, error) {
 	if name == "" || description == "" || noteType == "" {
 		return "", fmt.Errorf("new requires --type, --name and --description")
 	}
@@ -199,9 +207,12 @@ func NewNote(home, noteType, name, description string) (string, error) {
 	path := filepath.Join(home, name+".md")
 	title := []rune(strings.ReplaceAll(strings.ReplaceAll(name, "-", " "), "_", " "))
 	title[0] = unicode.ToUpper(title[0])
-	rendered, err := renderNote(properties{
-		Name: name, Description: description, Type: noteType, Status: "active",
-	}, "# "+string(title)+"\n", nil)
+	props := properties{Name: name, Description: description, Type: noteType, Status: "active"}
+	if provisional {
+		props.Status = "provisional"
+		props.Expires = time.Now().AddDate(0, 0, 60).Format("2006-01-02")
+	}
+	rendered, err := renderNote(props, "# "+string(title)+"\n", nil)
 	if err != nil {
 		return "", err
 	}
