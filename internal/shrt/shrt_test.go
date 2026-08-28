@@ -17,6 +17,7 @@ func TestStaticRoundTrip(t *testing.T) {
 		{"https://github.com/FixIt-Technologies/FixIt/issues/42", "gh/fixit/42"},
 		{"https://github.com/FixIt-Technologies/vitrinka/pull/250#issuecomment-1", "gh/vitrinka/250"},
 		{"https://github.com/Reservine/reservine", "gh/reservine"},
+		{"https://github.com/genesiscz/ReservineBack/pull/645", "gh/resback/645"},
 		{"https://vitrinka.ai/b/581", "b/581"},
 		{"https://app.vitrinka.ai/b/581", "b/581"},
 	}
