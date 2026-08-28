@@ -32,6 +32,15 @@ Member tokens mint and manage rules; the server stores only SHA-256 hashes
 caller's name. Revocation is immediate and per-person. Dynamic rules and the
 mint namespace are shared team-wide by design — one vocabulary.
 
+Self-enrollment (added 2026-08-28): `shrt enroll <name>` issues your own
+token with NO admin in the loop — authorization is network position. The
+endpoint honors only requests whose real client IP (edge-set `X-Real-IP`,
+never X-Forwarded-For) falls inside `LUKO_ENROLL_CIDRS` (the WireGuard
+ranges); unset = disabled, fail closed. The CLI dials the mesh gateway IP
+directly (TLS still verified against luko.to) so the request provably
+arrives from the WG address, and the token lands straight in the Keychain,
+never displayed. `admin` stays unregistrable; revocation stays admin-only.
+
 ## Assumptions
 
 - Hosting: the redirector deploys via deployik (custom domain + auto-TLS) —

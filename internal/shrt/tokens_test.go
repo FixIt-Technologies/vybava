@@ -111,9 +111,23 @@ func TestTokenNameValidation(t *testing.T) {
 	}
 	// "admin" must never be issuable — a member identified as "admin" would
 	// satisfy the adminOnly gate (privilege escalation).
-	for _, bad := range []string{"admin", "gh", "healthz", "UPPER", "x", "abcdefg"} {
+	for _, bad := range []string{"admin", "gh", "healthz", "UPPER", "x"} {
 		if _, err := s.Issue(bad); err == nil {
 			t.Errorf("Issue(%q) must be rejected", bad)
+		}
+	}
+}
+
+func TestLongLowercaseNamesAreIssuable(t *testing.T) {
+	s, err := OpenTokenStore(filepath.Join(t.TempDir(), "tokens.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ordinary names must not be rejected as "code-shaped" (regression:
+	// a static shape ban blocked names like oleksandr/smoketest).
+	for _, name := range []string{"oleksandr", "smoketest", "veronika"} {
+		if _, err := s.Issue(name); err != nil {
+			t.Errorf("Issue(%q): %v", name, err)
 		}
 	}
 }

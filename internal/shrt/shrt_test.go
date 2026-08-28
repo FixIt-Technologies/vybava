@@ -171,7 +171,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	code, created, err := store.Mint("https://example.com/persist")
+	code, created, err := store.Mint("https://example.com/persist", nil)
 	if err != nil || !created {
 		t.Fatalf("mint: %v created=%v", err, created)
 	}
@@ -204,7 +204,7 @@ func TestMintCollisionExtendsCode(t *testing.T) {
 	imposter := "https://example.com/imposter-target-also-long-enough"
 	// Force the collision: pre-seat the imposter's 7-char prefix on the victim.
 	store.byCode[Code(imposter)] = victim
-	code, created, err := store.Mint(imposter)
+	code, created, err := store.Mint(imposter, nil)
 	if err != nil || !created {
 		t.Fatalf("mint: %v created=%v", err, created)
 	}
@@ -230,7 +230,7 @@ func TestMintSkipsReservedSpelling(t *testing.T) {
 	if reservedSegments[Code(url)] {
 		t.Skip("astronomically unlucky: probe URL actually spells a reserved word")
 	}
-	code, _, err := store.Mint(url)
+	code, _, err := store.Mint(url, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
