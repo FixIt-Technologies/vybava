@@ -67,7 +67,7 @@ func (rt *runtime) shrtCommand(use string) *cobra.Command {
 	command.Flags().BoolVar(&osc8, "osc8", false, "emit an OSC 8 hyperlink instead of plain text")
 	command.Flags().StringVar(&label, "label", "", "visible text for --osc8 (default: the short URL)")
 	command.Flags().StringVar(&base, "base", "", "redirector origin override (default "+shrt.DefaultBase+")")
-	command.AddCommand(rt.shrtServeCommand(), rt.shrtTokenCommand(), rt.shrtRuleCommand())
+	command.AddCommand(rt.shrtServeCommand(), rt.shrtTokenCommand(), rt.shrtRuleCommand(), rt.shrtEnrollCommand())
 	return command
 }
 
@@ -186,6 +186,36 @@ func (rt *runtime) shrtRuleCommand() *cobra.Command {
 	return command
 }
 
+func (rt *runtime) shrtEnrollCommand() *cobra.Command {
+	var base, via string
+	command := &cobra.Command{
+		Use:   "enroll <your-name>",
+		Short: "Self-issue your member token over WireGuard and store it in the Keychain",
+		Long: "Connect WireGuard first. Enrollment dials the mesh gateway directly so the\n" +
+			"request provably arrives from your WG address; the token lands straight in\n" +
+			"the macOS Keychain (service \"luko.to\") and is never displayed.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			client := shrt.Client{Base: base}
+			issued, err := client.Enroll(args[0], via)
+			if err != nil {
+				return err
+			}
+			if err := shrt.StoreToken(issued.Token); err != nil {
+				return fmt.Errorf("token issued but keychain store failed (re-run to retry is NOT possible — ask an admin to revoke %q first): %w", issued.Name, err)
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]string{"enrolled": issued.Name, "storage": "keychain"})
+			}
+			_, err = fmt.Fprintf(rt.stdout, "enrolled as %q — token stored in the Keychain; shrt is ready\n", issued.Name)
+			return err
+		},
+	}
+	command.Flags().StringVar(&base, "base", "", "redirector origin override (default "+shrt.DefaultBase+")")
+	command.Flags().StringVar(&via, "via", "10.8.4.1", "mesh gateway IP to dial (employee WG gateway)")
+	return command
+}
+
 func (rt *runtime) shrtServeCommand() *cobra.Command {
 	var addr, store, rules, base string
 	command := &cobra.Command{
@@ -208,13 +238,26 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			enrollCIDRs, err := shrt.ParseEnrollCIDRs(os.Getenv("LUKO_ENROLL_CIDRS"))
+			if err != nil {
+				return err
+			}
+			trustedProxies, err := shrt.ParseEnrollCIDRs(os.Getenv("LUKO_TRUSTED_PROXY_CIDRS"))
+			if err != nil {
+				return err
+			}
 			server := &shrt.Server{
-				Base:      strings.TrimRight(base, "/"),
-				MintToken: strings.TrimSpace(os.Getenv("LUKO_MINT_TOKEN")),
-				Store:     linkStore,
-				Rules:     ruleStore,
-				Tokens:    tokenStore,
-				Log:       log.New(rt.stderr, "shrt: ", log.LstdFlags),
+				Base:           strings.TrimRight(base, "/"),
+				MintToken:      strings.TrimSpace(os.Getenv("LUKO_MINT_TOKEN")),
+				Store:          linkStore,
+				Rules:          ruleStore,
+				Tokens:         tokenStore,
+				EnrollCIDRs:    enrollCIDRs,
+				TrustedProxies: trustedProxies,
+				Log:            log.New(rt.stderr, "shrt: ", log.LstdFlags),
+			}
+			if len(enrollCIDRs) == 0 {
+				fmt.Fprintln(rt.stderr, "shrt: LUKO_ENROLL_CIDRS unset — self-enrollment disabled")
 			}
 			if server.MintToken == "" {
 				fmt.Fprintln(rt.stderr, "shrt: LUKO_MINT_TOKEN unset — minting disabled, static redirects only")

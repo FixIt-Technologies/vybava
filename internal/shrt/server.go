@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -70,13 +71,18 @@ const maxLinks = 100_000
 // was newly created. A 7-char prefix that already maps to a DIFFERENT url (or
 // spells a reserved path segment) extends until it is free or matches — a
 // truncated-hash collision must never redirect to the wrong target.
-func (s *Store) Mint(url string) (code string, created bool, err error) {
+// taken reports path segments claimed elsewhere (dynamic rule names); nil
+// means no extra claims.
+func (s *Store) Mint(url string, taken func(string) bool) (code string, created bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	code = ""
 	for n := codeLen; n <= maxCodeLen; n++ {
 		candidate := CodeN(url, n)
 		if reservedSegments[candidate] {
+			continue
+		}
+		if taken != nil && taken(candidate) {
 			continue
 		}
 		existing, exists := s.byCode[candidate]
@@ -126,7 +132,19 @@ type Server struct {
 	Store     *Store
 	Rules     *RuleStore
 	Tokens    *TokenStore // named member tokens (mint + rules, not token management)
-	Log       *log.Logger
+	// EnrollCIDRs are the WireGuard ranges allowed to self-enroll; empty
+	// means the enroll endpoint is disabled (fail closed).
+	EnrollCIDRs []netip.Prefix
+	// TrustedProxies are the ONLY peers whose X-Real-IP is honored; empty
+	// means the header is ignored and the TCP peer is the client.
+	TrustedProxies []netip.Prefix
+	Log            *log.Logger
+
+	// nameMu serializes minted-code creation against rule creation — the
+	// collision checks in both directions are read-then-write and would
+	// otherwise race (a mint and a rule create could each observe the name
+	// free and both claim it, with rules shadowing the fresh code).
+	nameMu sync.Mutex
 }
 
 // adminIdentity is the identity of the env-token holder.
@@ -173,6 +191,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tokens", s.adminOnly(s.handleTokenList))
 	mux.HandleFunc("POST /api/tokens", s.adminOnly(s.handleTokenIssue))
 	mux.HandleFunc("DELETE /api/tokens/{name}", s.adminOnly(s.handleTokenRevoke))
+	mux.HandleFunc("POST /api/enroll", s.handleEnroll)
 	mux.HandleFunc("/", s.handleRedirect)
 	return mux
 }
@@ -290,7 +309,16 @@ func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request, who st
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	rule, err := s.Rules.Create(strings.TrimSpace(req.Name), strings.TrimSpace(req.Prefix))
+	name := strings.TrimSpace(req.Name)
+	s.nameMu.Lock()
+	defer s.nameMu.Unlock()
+	if s.Store != nil && codePattern.MatchString(name) {
+		if _, exists := s.Store.Lookup(name); exists {
+			http.Error(w, fmt.Sprintf("rule name %q collides with an existing minted code", name), http.StatusConflict)
+			return
+		}
+	}
+	rule, err := s.Rules.Create(name, strings.TrimSpace(req.Prefix))
 	if errors.Is(err, ErrRuleExists) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -343,6 +371,16 @@ func (s *Server) handleRuleDelete(w http.ResponseWriter, r *http.Request, who st
 	}
 	s.logf("rule deleted: %s (by %s)", name, who)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ruleNameTaken lets the mint path avoid generating a code that a dynamic
+// rule already routes.
+func (s *Server) ruleNameTaken(segment string) bool {
+	if s.Rules == nil {
+		return false
+	}
+	_, exists := s.Rules.Get(segment)
+	return exists
 }
 
 func writeAPIJSON(w http.ResponseWriter, v any) {
@@ -413,7 +451,9 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request, who string) 
 			return
 		}
 	}
-	code, created, err := s.Store.Mint(req.URL)
+	s.nameMu.Lock()
+	code, created, err := s.Store.Mint(req.URL, s.ruleNameTaken)
+	s.nameMu.Unlock()
 	if err != nil {
 		s.logf("mint failed: %v", err)
 		http.Error(w, "store error", http.StatusInternalServerError)

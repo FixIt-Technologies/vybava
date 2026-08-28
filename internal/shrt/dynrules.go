@@ -23,21 +23,21 @@ type Rule struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// Rule names must never be routable as anything else: not a reserved segment,
-// not a built-in namespace, and never shaped like a minted code (7-52 chars in
-// the base32 alphabet) — the namespaces stay disjoint by construction.
+// Rule names must never be routable as anything else: not a reserved segment
+// or built-in namespace. Collisions with MINTED codes are checked dynamically
+// where both stores are visible (rules win route precedence; a rule may not
+// take a name an existing code already uses, and mint skips candidates that
+// equal a rule name) — a static shape ban would reject ordinary names like
+// "oleksandr".
 var ruleNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{1,11}$`)
 
-// ValidateRuleName rejects names that could collide with other routes.
+// ValidateRuleName rejects names that could collide with fixed routes.
 func ValidateRuleName(name string) error {
 	if !ruleNamePattern.MatchString(name) {
 		return fmt.Errorf("rule name %q: must match %s (2-12 chars, lowercase)", name, ruleNamePattern)
 	}
 	if reservedSegments[name] {
 		return fmt.Errorf("rule name %q is a reserved segment", name)
-	}
-	if codePattern.MatchString(name) {
-		return fmt.Errorf("rule name %q is shaped like a minted code — add a dash or digit outside 2-7", name)
 	}
 	return nil
 }

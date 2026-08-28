@@ -11,12 +11,12 @@ import (
 )
 
 func TestRuleNameValidation(t *testing.T) {
-	for _, bad := range []string{"gh", "b", "api", "healthz", "x", "UPPER", "7abc", "abcdefg" /* code-shaped */, "with/slash"} {
+	for _, bad := range []string{"gh", "b", "api", "healthz", "x", "UPPER", "7abc", "with/slash"} {
 		if err := ValidateRuleName(bad); err == nil {
 			t.Errorf("name %q must be rejected", bad)
 		}
 	}
-	for _, good := range []string{"sentry", "plane", "runs", "my-thing", "s1"} {
+	for _, good := range []string{"sentry", "plane", "runs", "my-thing", "s1", "oleksandr", "smoketest"} {
 		if err := ValidateRuleName(good); err != nil {
 			t.Errorf("name %q must be accepted: %v", good, err)
 		}
@@ -146,6 +146,22 @@ func TestServerRuleAPI(t *testing.T) {
 	}
 	if resp, _ := ruleAPICall(t, ts, "POST", "/api/rules", `{"name":"gh","prefix":"https://x.com/"}`, "sekrit"); resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("reserved name: %d", resp.StatusCode)
+	}
+
+	// A rule may not take a name an existing minted code already routes.
+	mintReq, _ := http.NewRequest("POST", ts.URL+"/api/mint", strings.NewReader(`{"url":"https://example.com/collision/probe/long/enough"}`))
+	mintReq.Header.Set("Authorization", "Bearer sekrit")
+	mintResp, err := http.DefaultClient.Do(mintReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var minted mintResponse
+	if err := json.NewDecoder(mintResp.Body).Decode(&minted); err != nil {
+		t.Fatal(err)
+	}
+	mintResp.Body.Close()
+	if resp, _ := ruleAPICall(t, ts, "POST", "/api/rules", `{"name":"`+minted.Code+`","prefix":"https://x.com/y/"}`, "sekrit"); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("rule shadowing a minted code must 409, got %d", resp.StatusCode)
 	}
 
 	// Redirect through the rule, query preserved.
