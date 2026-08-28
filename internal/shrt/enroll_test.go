@@ -124,6 +124,19 @@ func TestXRealIPIgnoredFromUntrustedPeer(t *testing.T) {
 	}
 }
 
+func TestTrustedProxyWithoutHeaderFailsClosed(t *testing.T) {
+	// A trusted proxy that omits (or corrupts) X-Real-IP must fail closed —
+	// the proxy's own loopback address must never be authorized as a client,
+	// even when loopback is inside EnrollCIDRs.
+	server, _ := enrollServer(t, "127.0.0.0/8")
+	if status, _ := enrollCall(t, server, `{"name":"ghost"}`, nil); *status != http.StatusForbidden {
+		t.Fatalf("proxy without X-Real-IP must 403, got %d", *status)
+	}
+	if status, _ := enrollCall(t, server, `{"name":"ghost"}`, map[string]string{"X-Real-IP": "not-an-ip"}); *status != http.StatusForbidden {
+		t.Fatalf("malformed X-Real-IP must 403, got %d", *status)
+	}
+}
+
 func TestEnrollFailsClosed(t *testing.T) {
 	// No CIDRs configured → 403 even from a mesh address.
 	server, _ := enrollServer(t, "")

@@ -31,20 +31,23 @@ func ParseEnrollCIDRs(value string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// clientAddr resolves the originating client IP. X-Real-IP is honored ONLY
-// when the direct TCP peer is a configured trusted proxy (the deployik edge
-// overwrites the header, but a client that reaches the app directly could
-// forge it). Otherwise the peer address itself is the client. X-Forwarded-For
-// is NEVER consulted — its leftmost value is attacker-controlled.
+// clientAddr resolves the originating client IP. A direct peer inside
+// trustedProxies is a PROXY, never the client — its X-Real-IP is required
+// and authoritative, and a missing or malformed header fails closed (the
+// proxy's own address must never be authorized as a client). Any other peer
+// IS the client. X-Forwarded-For is NEVER consulted — its leftmost value is
+// attacker-controlled.
 func clientAddr(r *http.Request, trustedProxies []netip.Prefix) (netip.Addr, bool) {
 	peer, ok := peerAddr(r)
 	if !ok {
 		return netip.Addr{}, false
 	}
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" && inAny(peer, trustedProxies) {
-		if addr, err := netip.ParseAddr(xri); err == nil {
-			return addr, true
+	if inAny(peer, trustedProxies) {
+		addr, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("X-Real-IP")))
+		if err != nil {
+			return netip.Addr{}, false
 		}
+		return addr, true
 	}
 	return peer, true
 }
