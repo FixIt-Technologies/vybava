@@ -41,7 +41,11 @@ func enrollServer(t *testing.T, cidrs string) (*Server, *TokenStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Server{Base: "https://luko.to", MintToken: "sekrit", Tokens: tokens, EnrollCIDRs: prefixes}, tokens
+	trusted, err := ParseEnrollCIDRs("127.0.0.0/8, ::1/128")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{Base: "https://luko.to", MintToken: "sekrit", Tokens: tokens, EnrollCIDRs: prefixes, TrustedProxies: trusted}, tokens
 }
 
 func enrollCall(t *testing.T, server *Server, body string, headers map[string]string) (*int, []byte) {
@@ -107,6 +111,16 @@ func TestEnrollMeshGating(t *testing.T) {
 	// "admin" stays banned even over the mesh.
 	if status, _ := enrollCall(t, server, `{"name":"admin"}`, map[string]string{"X-Real-IP": "10.8.4.7"}); *status != http.StatusBadRequest {
 		t.Fatalf("admin enroll must 400: %d", *status)
+	}
+}
+
+func TestXRealIPIgnoredFromUntrustedPeer(t *testing.T) {
+	// Without the peer in TrustedProxies, a forged X-Real-IP must not grant
+	// mesh membership — the peer address (loopback, outside 10.8/16) rules.
+	server, _ := enrollServer(t, "10.8.0.0/16")
+	server.TrustedProxies = nil
+	if status, _ := enrollCall(t, server, `{"name":"forger"}`, map[string]string{"X-Real-IP": "10.8.4.7"}); *status != http.StatusForbidden {
+		t.Fatalf("forged X-Real-IP from untrusted peer must 403, got %d", *status)
 	}
 }
 

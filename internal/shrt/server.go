@@ -135,7 +135,16 @@ type Server struct {
 	// EnrollCIDRs are the WireGuard ranges allowed to self-enroll; empty
 	// means the enroll endpoint is disabled (fail closed).
 	EnrollCIDRs []netip.Prefix
-	Log         *log.Logger
+	// TrustedProxies are the ONLY peers whose X-Real-IP is honored; empty
+	// means the header is ignored and the TCP peer is the client.
+	TrustedProxies []netip.Prefix
+	Log            *log.Logger
+
+	// nameMu serializes minted-code creation against rule creation — the
+	// collision checks in both directions are read-then-write and would
+	// otherwise race (a mint and a rule create could each observe the name
+	// free and both claim it, with rules shadowing the fresh code).
+	nameMu sync.Mutex
 }
 
 // adminIdentity is the identity of the env-token holder.
@@ -301,6 +310,8 @@ func (s *Server) handleRuleCreate(w http.ResponseWriter, r *http.Request, who st
 		return
 	}
 	name := strings.TrimSpace(req.Name)
+	s.nameMu.Lock()
+	defer s.nameMu.Unlock()
 	if s.Store != nil && codePattern.MatchString(name) {
 		if _, exists := s.Store.Lookup(name); exists {
 			http.Error(w, fmt.Sprintf("rule name %q collides with an existing minted code", name), http.StatusConflict)
@@ -440,7 +451,9 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request, who string) 
 			return
 		}
 	}
+	s.nameMu.Lock()
 	code, created, err := s.Store.Mint(req.URL, s.ruleNameTaken)
+	s.nameMu.Unlock()
 	if err != nil {
 		s.logf("mint failed: %v", err)
 		http.Error(w, "store error", http.StatusInternalServerError)

@@ -31,16 +31,25 @@ func ParseEnrollCIDRs(value string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// clientAddr resolves the originating client IP: the X-Real-IP header when
-// present (the deployik edge overwrites it with the TCP peer address, so it
-// is not client-forgeable), else the direct peer. X-Forwarded-For is NEVER
-// consulted — its leftmost value is attacker-controlled.
-func clientAddr(r *http.Request) (netip.Addr, bool) {
-	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+// clientAddr resolves the originating client IP. X-Real-IP is honored ONLY
+// when the direct TCP peer is a configured trusted proxy (the deployik edge
+// overwrites the header, but a client that reaches the app directly could
+// forge it). Otherwise the peer address itself is the client. X-Forwarded-For
+// is NEVER consulted — its leftmost value is attacker-controlled.
+func clientAddr(r *http.Request, trustedProxies []netip.Prefix) (netip.Addr, bool) {
+	peer, ok := peerAddr(r)
+	if !ok {
+		return netip.Addr{}, false
+	}
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" && inAny(peer, trustedProxies) {
 		if addr, err := netip.ParseAddr(xri); err == nil {
 			return addr, true
 		}
 	}
+	return peer, true
+}
+
+func peerAddr(r *http.Request) (netip.Addr, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return netip.Addr{}, false
@@ -52,6 +61,15 @@ func clientAddr(r *http.Request) (netip.Addr, bool) {
 	return addr, true
 }
 
+func inAny(addr netip.Addr, prefixes []netip.Prefix) bool {
+	for _, prefix := range prefixes {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
 // handleEnroll is self-service token issuance, authorized by network
 // position alone: the client's real IP must fall inside a configured
 // WireGuard range. No CIDRs configured → the endpoint does not exist (403).
@@ -60,19 +78,12 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "enrollment disabled", http.StatusForbidden)
 		return
 	}
-	addr, ok := clientAddr(r)
+	addr, ok := clientAddr(r, s.TrustedProxies)
 	if !ok {
 		http.Error(w, "enrollment disabled", http.StatusForbidden)
 		return
 	}
-	inMesh := false
-	for _, prefix := range s.EnrollCIDRs {
-		if prefix.Contains(addr) {
-			inMesh = true
-			break
-		}
-	}
-	if !inMesh {
+	if !inAny(addr, s.EnrollCIDRs) {
 		s.logf("enroll refused from %s (outside mesh)", addr)
 		http.Error(w, "enrollment disabled", http.StatusForbidden)
 		return

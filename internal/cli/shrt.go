@@ -242,14 +242,19 @@ func (rt *runtime) shrtServeCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			trustedProxies, err := shrt.ParseEnrollCIDRs(os.Getenv("LUKO_TRUSTED_PROXY_CIDRS"))
+			if err != nil {
+				return err
+			}
 			server := &shrt.Server{
-				Base:        strings.TrimRight(base, "/"),
-				MintToken:   strings.TrimSpace(os.Getenv("LUKO_MINT_TOKEN")),
-				Store:       linkStore,
-				Rules:       ruleStore,
-				Tokens:      tokenStore,
-				EnrollCIDRs: enrollCIDRs,
-				Log:         log.New(rt.stderr, "shrt: ", log.LstdFlags),
+				Base:           strings.TrimRight(base, "/"),
+				MintToken:      strings.TrimSpace(os.Getenv("LUKO_MINT_TOKEN")),
+				Store:          linkStore,
+				Rules:          ruleStore,
+				Tokens:         tokenStore,
+				EnrollCIDRs:    enrollCIDRs,
+				TrustedProxies: trustedProxies,
+				Log:            log.New(rt.stderr, "shrt: ", log.LstdFlags),
 			}
 			if len(enrollCIDRs) == 0 {
 				fmt.Fprintln(rt.stderr, "shrt: LUKO_ENROLL_CIDRS unset — self-enrollment disabled")
