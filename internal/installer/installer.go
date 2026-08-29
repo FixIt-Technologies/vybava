@@ -268,7 +268,11 @@ func installApplet(destination string) error {
 	if err != nil {
 		return fmt.Errorf("resolve current executable: %w", err)
 	}
-	executable, err = filepath.EvalSymlinks(executable)
+	return installAppletFrom(executable, destination)
+}
+
+func installAppletFrom(executable, destination string) error {
+	resolvedExecutable, err := filepath.EvalSymlinks(executable)
 	if err != nil {
 		return fmt.Errorf("resolve executable links: %w", err)
 	}
@@ -280,7 +284,7 @@ func installApplet(destination string) error {
 			return fmt.Errorf("refusing to replace non-link executable at %s", destination)
 		}
 		target, readErr := filepath.EvalSymlinks(destination)
-		if readErr == nil && target != executable {
+		if readErr == nil && target != resolvedExecutable {
 			return fmt.Errorf("refusing to replace link owned by another executable at %s", destination)
 		}
 		if err := os.Remove(destination); err != nil {
@@ -290,7 +294,7 @@ func installApplet(destination string) error {
 		return err
 	}
 	if runtime.GOOS == "windows" {
-		return copyExecutable(executable, destination)
+		return copyExecutable(resolvedExecutable, destination)
 	}
 	if err := os.Symlink(executable, destination); err != nil {
 		return fmt.Errorf("create applet link: %w", err)
