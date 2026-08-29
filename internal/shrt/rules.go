@@ -26,7 +26,7 @@ var repoAliases = map[string]string{
 	"prodinfra": "FixIt-Technologies/produlinka-infra",
 	"webinfra":  "FixIt-Technologies/webulinka-infra",
 	"reservine": "Reservine/reservine",
-	"resback":   "genesiscz/ReservineBack",
+	"resback":   "Reservine/ReservineBack",
 	"exports":   "LEFTEQ/Exports",
 	"claudik":   "LEFTEQ/Claudik",
 }
@@ -37,6 +37,8 @@ var aliasByRepo = func() map[string]string {
 	for alias, repo := range repoAliases {
 		m[strings.ToLower(repo)] = alias
 	}
+	// Preserve shortening for links copied before the repository transfer.
+	m["genesiscz/reservineback"] = "resback"
 	return m
 }()
 
