@@ -199,7 +199,8 @@ func ShortenDynamic(rules []Rule, long string) string {
 	best := ""
 	var bestRule Rule
 	for _, r := range rules {
-		if strings.HasPrefix(long, r.Prefix) && len(r.Prefix) > len(best) {
+		matchesRoot := long == strings.TrimSuffix(r.Prefix, "/")
+		if (matchesRoot || strings.HasPrefix(long, r.Prefix)) && len(r.Prefix) > len(best) {
 			best = r.Prefix
 			bestRule = r
 		}
@@ -207,7 +208,10 @@ func ShortenDynamic(rules []Rule, long string) string {
 	if best == "" {
 		return ""
 	}
-	tail := long[len(best):]
+	tail := ""
+	if long != strings.TrimSuffix(best, "/") {
+		tail = long[len(best):]
+	}
 	if tail == "" {
 		return bestRule.Name
 	}

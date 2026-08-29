@@ -89,6 +89,9 @@ func TestDynamicRoundTrip(t *testing.T) {
 	if got := ExpandDynamic(rule, ""); got != "https://sentry.example.com/issues" {
 		t.Fatalf("bare expand = %q", got)
 	}
+	if got := ShortenDynamic([]Rule{rule}, "https://sentry.example.com/issues"); got != "sentry" {
+		t.Fatalf("bare shorten = %q", got)
+	}
 	// Longest prefix wins.
 	specific := Rule{Name: "deep", Prefix: "https://sentry.example.com/issues/special/"}
 	if got := ShortenDynamic([]Rule{rule, specific}, "https://sentry.example.com/issues/special/9"); got != "deep/9" {

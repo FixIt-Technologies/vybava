@@ -45,6 +45,8 @@ shrt rule rm <name>
 
 Rules are server-owned and live everywhere immediately;
 `~/.config/shrt/rules-<host>.json` caches them per origin for offline use.
+Both a prefix's bare root and its deeper paths use the rule, so a
+`https://github.com/` prefix also covers `https://github.com`.
 
 ## Admin
 

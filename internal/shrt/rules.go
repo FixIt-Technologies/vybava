@@ -26,6 +26,7 @@ var repoAliases = map[string]string{
 	"prodinfra": "FixIt-Technologies/produlinka-infra",
 	"webinfra":  "FixIt-Technologies/webulinka-infra",
 	"reservine": "Reservine/reservine",
+	"resback":   "genesiscz/ReservineBack",
 	"exports":   "LEFTEQ/Exports",
 	"claudik":   "LEFTEQ/Claudik",
 }
