@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
 )
 
@@ -198,5 +200,52 @@ func write(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A description containing " #" is a YAML comment when unquoted, so it parses
+// truncated. `fix` must recover the full line instead of writing the truncation
+// back — the loss is silent and permanent otherwise (observed 2026-08-30).
+func TestFixRecoversCommentTruncatedDescription(t *testing.T) {
+	root := t.TempDir()
+	note := filepath.Join(root, "project-se-cache.md")
+	write(t, note, "---\nname: project-se-cache\ndescription: After PR #22, the store cached the public half but hasKey checked only the private item\ntype: project\nstatus: active\n---\n\nbody\n")
+
+	if _, _, err := memorylint.Fix([]string{root}, false); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	got, err := os.ReadFile(note)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(got), "hasKey checked only the private item") {
+		t.Errorf("description truncated at the comment marker; got:\n%s", got)
+	}
+	// And the rewritten value must survive a round-trip as real YAML.
+	var props struct {
+		Description string `yaml:"description"`
+	}
+	front := string(got)
+	front = front[4 : strings.Index(front[4:], "\n---")+4]
+	if err := yaml.Unmarshal([]byte(front), &props); err != nil {
+		t.Fatalf("rewritten frontmatter is not valid YAML: %v", err)
+	}
+	if !strings.Contains(props.Description, "hasKey") {
+		t.Errorf("round-trip lost the tail: %q", props.Description)
+	}
+}
+
+// A genuine trailing comment after a quoted scalar is NOT a truncation.
+func TestFixLeavesQuotedScalarWithCommentAlone(t *testing.T) {
+	root := t.TempDir()
+	note := filepath.Join(root, "project-quoted.md")
+	write(t, note, "---\nname: project-quoted\ndescription: \"a real description\" # trailing note\ntype: project\nstatus: active\n---\n\nbody\n")
+
+	if _, _, err := memorylint.Fix([]string{root}, false); err != nil {
+		t.Fatalf("Fix: %v", err)
+	}
+	got, _ := os.ReadFile(note)
+	if strings.Contains(string(got), "trailing note") {
+		t.Errorf("a trailing comment on a quoted scalar was absorbed into the value:\n%s", got)
 	}
 }
