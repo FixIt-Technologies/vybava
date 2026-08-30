@@ -84,6 +84,10 @@ func Normalize(path string) ([]byte, bool, error) {
 		delete(all, k)
 	}
 
+	// A description truncated at a YAML comment marker is recovered from the raw
+	// line before anything is written back — see recoverCommentTruncated.
+	legacy.Description = recoverCommentTruncated(front, "description", legacy.Description)
+
 	props := properties{
 		Name:         legacy.Name,
 		Description:  legacy.Description,
@@ -115,6 +119,46 @@ func Normalize(path string) ([]byte, bool, error) {
 		return nil, false, err
 	}
 	return rendered, !bytes.Equal(rendered, raw), nil
+}
+
+// recoverCommentTruncated returns the full text of a frontmatter scalar that YAML
+// silently truncated at an inline comment marker.
+//
+// An unquoted scalar containing " #" starts a YAML comment, so
+//
+//	description: After PR #22, the store cached the public half
+//
+// parses as "After PR". Re-serializing that value writes the truncation back to
+// disk and the rest of the line is gone for good — `fix`, the documented repair,
+// destroys the note it was asked to normalize. Observed live 2026-08-30 across a
+// 358-note migration (3 notes hit).
+//
+// The raw line is authoritative here: if the parsed value is a prefix of the raw
+// remainder and the discarded tail begins a comment, the author meant the whole
+// line. Anything else (a real trailing comment, an already-quoted scalar) is left
+// exactly as YAML read it.
+func recoverCommentTruncated(front []byte, key, parsed string) string {
+	if parsed == "" || !strings.Contains(string(front), key+":") {
+		return parsed
+	}
+	for _, line := range strings.Split(string(front), "\n") {
+		if !strings.HasPrefix(line, key+":") {
+			continue
+		}
+		rawVal := strings.TrimSpace(strings.TrimPrefix(line, key+":"))
+		// A quoted scalar is unambiguous — YAML already read it correctly.
+		if strings.HasPrefix(rawVal, `"`) || strings.HasPrefix(rawVal, "'") {
+			return parsed
+		}
+		trimmed := strings.TrimRight(parsed, " ")
+		if len(rawVal) > len(trimmed) && strings.HasPrefix(rawVal, trimmed) {
+			if strings.HasPrefix(strings.TrimLeft(rawVal[len(trimmed):], " "), "#") {
+				return rawVal
+			}
+		}
+		return parsed
+	}
+	return parsed
 }
 
 func renderNote(props properties, body string, extra map[string]any) ([]byte, error) {
