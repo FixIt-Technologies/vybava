@@ -14,6 +14,7 @@ import (
 	"github.com/FixIt-Technologies/vybava/internal/catalog"
 	"github.com/FixIt-Technologies/vybava/internal/doctor"
 	"github.com/FixIt-Technologies/vybava/internal/fontfreeze"
+	"github.com/FixIt-Technologies/vybava/internal/ingressgen"
 	"github.com/FixIt-Technologies/vybava/internal/installer"
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
 	"github.com/FixIt-Technologies/vybava/internal/perfrig"
@@ -81,6 +82,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "press" {
 		return rt.pressApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "ingressgen" {
+		return rt.ingressgenApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -103,6 +107,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.perfrigCommand("perfrig"),
 		rt.shrtCommand("shrt [url...]"),
 		rt.pressCommand("press"),
+		rt.ingressgenCommand("ingressgen"),
 		rt.browseCommand(),
 	)
 	return root, nil
@@ -473,6 +478,72 @@ func (rt *runtime) fontfreezeApplet() *cobra.Command {
 	command.SetOut(rt.stdout)
 	command.SetErr(rt.stderr)
 	command.PersistentFlags().BoolVar(&rt.json, "json", false, "emit stable JSON output")
+	return command
+}
+
+func (rt *runtime) ingressgenApplet() *cobra.Command {
+	command := rt.ingressgenCommand("ingressgen")
+	command.SilenceUsage = true
+	command.SilenceErrors = true
+	command.SetOut(rt.stdout)
+	command.SetErr(rt.stderr)
+	command.PersistentFlags().BoolVar(&rt.json, "json", false, "emit stable JSON output")
+	return command
+}
+
+func (rt *runtime) ingressgenCommand(use string) *cobra.Command {
+	command := &cobra.Command{Use: use, Short: "Render default-deny DOCKER-USER rules from a manifest"}
+	var outputPath string
+	render := &cobra.Command{
+		Use:   "render <manifest>",
+		Short: "Render an iptables-restore ruleset",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			manifest, err := ingressgen.Load(args[0])
+			if err != nil {
+				return err
+			}
+			rules, err := ingressgen.Render(manifest)
+			if err != nil {
+				return err
+			}
+			if outputPath == "" {
+				_, err = rt.stdout.Write(rules)
+				return err
+			}
+			return os.WriteFile(outputPath, rules, 0o644)
+		},
+	}
+	render.Flags().StringVarP(&outputPath, "output", "o", "", "write rendered rules to this path")
+
+	check := &cobra.Command{
+		Use:   "check <manifest> <rendered-rules>",
+		Short: "Fail when committed rules drift from the manifest",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			manifest, err := ingressgen.Load(args[0])
+			if err != nil {
+				return err
+			}
+			rules, err := ingressgen.Render(manifest)
+			if err != nil {
+				return err
+			}
+			existing, err := os.ReadFile(args[1])
+			if err != nil {
+				return err
+			}
+			if err := ingressgen.Check(rules, existing); err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]any{"status": "ok", "manifest": args[0], "rules": args[1]})
+			}
+			_, err = fmt.Fprintf(rt.stdout, "ok: %s matches %s\n", args[1], args[0])
+			return err
+		},
+	}
+	command.AddCommand(render, check)
 	return command
 }
 

@@ -31,6 +31,12 @@ items:
     description: Deterministic state for the press document family — resolve a project, keep ~/Exports/<project>/ config and index honest, look up Czech companies in ARES, and serve the family's shared doctrine.
     applet: press
 
+  - id: ingressgen
+    kind: applet
+    status: experimental
+    description: Render and drift-check complete default-deny DOCKER-USER iptables policies from project-owned manifests.
+    applet: ingressgen
+
   - id: prm
     kind: skill
     status: experimental
@@ -86,6 +92,7 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - ingressgen
 
   - id: press-family
     description: Document production — the press CLI plus the PDF, logo, and offer skills that drive it.
@@ -109,6 +116,7 @@ groups:
       - fontfreeze
       - perfrig
       - shrt
+      - ingressgen
       - prm
       - prc
       - merge
