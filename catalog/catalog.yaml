@@ -25,6 +25,12 @@ items:
     description: Shorten URLs into terminal-safe luko.to links that never wrap or truncate on click in narrow panes; also runs the redirector server.
     applet: shrt
 
+  - id: press
+    kind: applet
+    status: experimental
+    description: Deterministic state for the press document family — resolve a project, keep ~/Exports/<project>/ config and index honest, look up Czech companies in ARES, and serve the family's shared doctrine.
+    applet: press
+
   - id: prm
     kind: skill
     status: experimental
@@ -43,6 +49,24 @@ items:
     description: Merge a pull request only after its safety, review, and CI gates pass.
     source: skills/merge
 
+  - id: press-pdf
+    kind: skill
+    status: experimental
+    description: Build offer, documentation, and legal PDFs from a per-project config — themed, linted, and byte-reproducible.
+    source: skills/press-pdf
+
+  - id: press-logo
+    kind: skill
+    status: experimental
+    description: Logo, brand mark, and favicon creation — decision-led brainstorm to SVG takes on a local preview, then a standardized brand package.
+    source: skills/press-logo
+
+  - id: press-offer
+    kind: skill
+    status: experimental
+    description: Czech commercial offer documents (cenova nabidka, functional specification, impact analysis) as editable DOCX in the issuer's house style.
+    source: skills/press-offer
+
 groups:
   - id: recommended
     description: Stable baseline suitable for every workstation and project.
@@ -58,6 +82,18 @@ groups:
       - fontfreeze
       - perfrig
       - shrt
+      - press
+      - press-pdf
+      - press-logo
+      - press-offer
+
+  - id: press-family
+    description: Document production — the press CLI plus the PDF, logo, and offer skills that drive it.
+    items:
+      - press
+      - press-pdf
+      - press-logo
+      - press-offer
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -76,3 +112,7 @@ groups:
       - prm
       - prc
       - merge
+      - press
+      - press-pdf
+      - press-logo
+      - press-offer

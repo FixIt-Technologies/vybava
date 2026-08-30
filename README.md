@@ -13,9 +13,11 @@ every item installs independently.
 | `fontfreeze` | applet | Freeze variable webfonts at rendered axis positions and subset per language. |
 | `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |
 | `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
+| `press` | applet | Deterministic state for the document family — project resolution, `~/Exports/<project>/` config and index, ARES lookups, shared doctrine. → [docs/press.md](docs/press.md) |
+| `press-pdf` / `press-logo` / `press-offer` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
 
-Groups (`recommended`, `experimental`, `ai-git`, `everything`) are composable
-presets in the catalog — never code.
+Groups (`recommended`, `experimental`, `ai-git`, `press-family`, `everything`)
+are composable presets in the catalog — never code.
 
 ## Install
 
@@ -45,7 +47,8 @@ equivalent.
 catalog/catalog.yaml   package and group source of truth
 cmd/vybava/            multicall entrypoint
 internal/<id>/         one focused Go package per capability
-skills/<id>/           canonical cross-agent skill payloads
+skills/<id>/           canonical cross-agent skill payloads (SKILL.md plus any
+                       references/ and assets/ the skill ships)
 docs/                  per-tool references, release flow, decisions
 Dockerfile             the luko.to redirector image (deployik app "luko")
 ```

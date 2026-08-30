@@ -26,14 +26,36 @@ func TestResolveCombinesAndDeduplicatesSelectors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	items, err := c.Resolve([]string{"recommended", "memorylint", "experimental"})
+	selectors := []string{"recommended", "memorylint", "experimental"}
+	items, err := c.Resolve(selectors)
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	// recommended(memorylint) + memorylint +
-	// experimental(prm,prc,merge,fontfreeze,perfrig,shrt), deduplicated.
-	if got, want := len(items), 7; got != want {
-		t.Fatalf("Resolve() item count = %d, want %d", got, want)
+	// The union of the selected groups and the bare item, deduplicated.
+	// Derived from the catalog rather than hardcoded, so adding a package
+	// does not break this test — only a genuine dedup regression does.
+	want := map[string]bool{}
+	for _, selector := range selectors {
+		expanded, err := c.Resolve([]string{selector})
+		if err != nil {
+			t.Fatalf("Resolve(%q) error = %v", selector, err)
+		}
+		for _, item := range expanded {
+			want[item.ID] = true
+		}
+	}
+	if got := len(items); got != len(want) {
+		t.Fatalf("Resolve() item count = %d, want %d (union of %v)", got, len(want), selectors)
+	}
+	seen := map[string]bool{}
+	for _, item := range items {
+		if seen[item.ID] {
+			t.Fatalf("Resolve() returned %q twice", item.ID)
+		}
+		seen[item.ID] = true
+		if !want[item.ID] {
+			t.Fatalf("Resolve() returned unselected item %q", item.ID)
+		}
 	}
 }
 

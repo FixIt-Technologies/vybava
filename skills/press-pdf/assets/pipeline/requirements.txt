@@ -1,0 +1,9 @@
+# pdf-press pipeline — exact pins.
+# Reproducible PDFs need a reproducible toolchain: a reportlab or pypdf minor
+# bump can change object ordering and break byte-identical rebuilds. Bump these
+# deliberately, then re-run `build.py --repro` on every target.
+pypdf==6.14.2
+reportlab==5.0.0
+fonttools==4.63.0
+brotli==1.2.0
+pdfminer.six==20250506

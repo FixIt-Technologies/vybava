@@ -1,0 +1,180 @@
+{
+  "$schema": "./pdf-press.config.schema.json",
+  "schemaVersion": 1,
+  "pipelineVersion": 3,
+  "project": {
+    "name": "PROJECT",
+    "title": {
+      "en": "Platform architecture",
+      "cs": "Architektura platformy"
+    },
+    "subtitle": {
+      "en": "System architecture and integration specification.",
+      "cs": "Architektura systému a integrační specifikace."
+    },
+    "author": "PROJECT",
+    "subject": {
+      "en": "Platform architecture specification",
+      "cs": "Specifikace architektury platformy"
+    }
+  },
+  "version": {
+    "policy": "config",
+    "value": "v2026.07",
+    "date": "2026-07-26"
+  },
+  "output": {
+    "dir": ".",
+    "pattern": "{project}-architecture-{edition}-{lang}.pdf"
+  },
+  "languages": [
+    "cs"
+  ],
+  "editions": {
+    "internal": {
+      "label": {
+        "en": "internal edition",
+        "cs": "interní vydání"
+      },
+      "marking": {
+        "en": "INTERNAL — do not distribute",
+        "cs": "INTERNÍ — nešířit"
+      },
+      "footerLeft": {
+        "en": "PROJECT — platform architecture · internal edition",
+        "cs": "PROJECT — architektura platformy · interní vydání"
+      },
+      "tagStyle": "ink",
+      "figures": [
+        "01-system-context"
+      ],
+      "scopeNote": "Full component depth. Everything the team needs and nothing a third party may see."
+    }
+  },
+  "theme": {
+    "page": {
+      "size": "A4",
+      "margin": "17mm 16mm 21mm 16mm"
+    },
+    "contentWidth": 760,
+    "colors": {
+      "paper": "#ffffff",
+      "panel": "#f5f6f7",
+      "panel-2": "#eceef0",
+      "ink": "#101418",
+      "body": "#1f2429",
+      "dim": "#5b6770",
+      "faint": "#939ba1",
+      "edge": "#dde2e6",
+      "edge-strong": "#c4ccd2",
+      "brand": "#1f66ad",
+      "brand-wash": "#e6effa",
+      "brand-ink": "#17497d"
+    },
+    "signals": {
+      "pv": [
+        "#a86f00",
+        "#fdf3dd"
+      ],
+      "bat": [
+        "#0e7a45",
+        "#e5f4ea"
+      ],
+      "grid": [
+        "#1f66ad",
+        "#e6effa"
+      ],
+      "backup": [
+        "#6a4bc4",
+        "#efeafb"
+      ],
+      "alarm": [
+        "#c23a3a",
+        "#fbe9e9"
+      ],
+      "live": [
+        "#0e7a45",
+        "#e5f4ea"
+      ]
+    },
+    "fonts": {
+      "body": {
+        "family": "Inter",
+        "stack": "system-ui, sans-serif",
+        "faces": []
+      },
+      "display": {
+        "family": "Inter",
+        "stack": "system-ui, sans-serif",
+        "faces": []
+      },
+      "mono": {
+        "family": "SFMono-Regular",
+        "stack": "ui-monospace, monospace",
+        "faces": []
+      }
+    },
+    "cover": {
+      "style": "panel",
+      "motif": "",
+      "heightMm": 296
+    },
+    "footer": {
+      "sizePt": 6.4,
+      "color": "dim",
+      "sideMarginMm": 16,
+      "baselineMm": 11,
+      "pageWord": {
+        "en": "page",
+        "cs": "strana"
+      }
+    }
+  },
+  "figures": {
+    "dir": "figures",
+    "labels": "figures/labels.json",
+    "lint": {
+      "enforceViewBoxWidth": true,
+      "rx": 4,
+      "strokeWidth": 1.2,
+      "fontSizes": [
+        11,
+        9.5,
+        8
+      ],
+      "allowExtraColors": []
+    }
+  },
+  "content": {
+    "dir": "build/content",
+    "doctrine": {
+      "statusTags": [
+        "IMPLEMENTED",
+        "PLANNED",
+        "PROPOSED"
+      ],
+      "requireStatusOnNormative": true,
+      "requireSourceOnStatus": true,
+      "normativeMarkers": {
+        "en": [
+          "must",
+          "shall",
+          "may not",
+          "is required to",
+          "guarantees"
+        ],
+        "cs": [
+          "musí",
+          "nesmí",
+          "je povinen",
+          "zaručuje",
+          "vyžaduje"
+        ]
+      }
+    }
+  },
+  "chrome": {
+    "path": null,
+    "virtualTimeBudgetMs": 10000
+  }
+}

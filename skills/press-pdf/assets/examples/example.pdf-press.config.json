@@ -1,0 +1,251 @@
+{
+  "$schema": "./pdf-press.config.schema.json",
+  "schemaVersion": 1,
+  "pipelineVersion": 3,
+  "_note": "Worked reference config: a light-print platform identity expressed as pdf-press tokens — hero-fill cover with a brand motif, two editions, two languages, variable webfonts. Migrating an existing hand-rolled pipeline onto this config additionally requires tokenizing content/*.html (hardcoded titles and .edition-tag.internal/.partner classes become {{title}} / {{editionTagStyle}}) — see references/migrating-an-existing-pipeline.md.",
+  "project": {
+    "name": "acme",
+    "title": {
+      "en": "Platform architecture",
+      "cs": "Architektura platformy"
+    },
+    "subtitle": {
+      "en": "Energy management platform for PLC-controlled sites.",
+      "cs": "Platforma pro energetický management PLC řízených lokalit."
+    },
+    "author": "acme",
+    "subject": {
+      "en": "Energy management platform architecture",
+      "cs": "Architektura platformy pro energetický management"
+    }
+  },
+  "version": {
+    "policy": "config",
+    "value": "v2026.07",
+    "date": "2026-07-26"
+  },
+  "output": {
+    "dir": ".",
+    "pattern": "{project}-architecture-{edition}-{lang}.pdf"
+  },
+  "languages": [
+    "en",
+    "cs"
+  ],
+  "editions": {
+    "internal": {
+      "label": {
+        "en": "internal edition",
+        "cs": "interní vydání"
+      },
+      "marking": {
+        "en": "INTERNAL — do not distribute",
+        "cs": "INTERNÍ — nešířit"
+      },
+      "footerLeft": {
+        "en": "acme — platform architecture · internal edition",
+        "cs": "acme — architektura platformy · interní vydání"
+      },
+      "tagStyle": "ink",
+      "figures": [
+        "01-system-context",
+        "02-module-map",
+        "03-ingest-pipeline",
+        "04-device-graph",
+        "05-command-lifecycle",
+        "06-schedule-engine",
+        "07-vcp-topology",
+        "08-provisioning",
+        "09-deployment"
+      ],
+      "scopeNote": "Full component level: every internal/* module, data flows, lifecycles, deployment, data model."
+    },
+    "partner": {
+      "label": {
+        "en": "partner edition",
+        "cs": "partnerské vydání"
+      },
+      "marking": {
+        "en": "Confidential — for partner use",
+        "cs": "Důvěrné — pro potřeby partnera"
+      },
+      "footerLeft": {
+        "en": "acme — platform architecture · partner edition",
+        "cs": "acme — architektura platformy · partnerské vydání"
+      },
+      "tagStyle": "paper",
+      "figures": [
+        "01-system-context",
+        "05-command-lifecycle",
+        "06-schedule-engine",
+        "07-vcp-topology",
+        "10-partner-access"
+      ],
+      "scopeNote": "Integration-facing only. Omits module breakdown, data model, deployment, migration."
+    }
+  },
+  "theme": {
+    "page": {
+      "size": "A4",
+      "margin": "17mm 16mm 21mm 16mm"
+    },
+    "contentWidth": 760,
+    "colors": {
+      "paper": "#ffffff",
+      "panel": "#f8f8f7",
+      "panel-2": "#f0f0ee",
+      "ink": "#000000",
+      "body": "#1e1e1e",
+      "dim": "#5d6157",
+      "faint": "#94948e",
+      "edge": "#e4e4e0",
+      "edge-strong": "#c9c9c2",
+      "brand": "#c6ff00",
+      "brand-wash": "#f4fbd7",
+      "brand-ink": "#5f7d00"
+    },
+    "signals": {
+      "pv": [
+        "#a86f00",
+        "#fdf3dd"
+      ],
+      "bat": [
+        "#0e7a45",
+        "#e5f4ea"
+      ],
+      "grid": [
+        "#1f66ad",
+        "#e6effa"
+      ],
+      "backup": [
+        "#6a4bc4",
+        "#efeafb"
+      ],
+      "alarm": [
+        "#c23a3a",
+        "#fbe9e9"
+      ],
+      "live": [
+        "#0e7a45",
+        "#e5f4ea"
+      ]
+    },
+    "fonts": {
+      "body": {
+        "family": "Manrope",
+        "stack": "sans-serif",
+        "faces": [
+          {
+            "src": "fonts/manrope-latin-ext-wght-normal.woff2",
+            "format": "woff2-variations",
+            "weight": "200 800",
+            "unicodeRange": "U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF"
+          },
+          {
+            "src": "fonts/manrope-latin-wght-normal.woff2",
+            "format": "woff2-variations",
+            "weight": "200 800"
+          }
+        ]
+      },
+      "display": {
+        "family": "Archivo",
+        "stack": "sans-serif",
+        "faces": [
+          {
+            "src": "fonts/archivo-latin-ext-wght-normal.woff2",
+            "format": "woff2-variations",
+            "weight": "100 900",
+            "unicodeRange": "U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF"
+          },
+          {
+            "src": "fonts/archivo-latin-wght-normal.woff2",
+            "format": "woff2-variations",
+            "weight": "100 900"
+          }
+        ]
+      },
+      "mono": {
+        "family": "Fragment Mono",
+        "stack": "monospace",
+        "faces": [
+          {
+            "src": "fonts/fragment-mono-latin-ext-400-normal.woff2",
+            "format": "woff2",
+            "weight": "400",
+            "unicodeRange": "U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF"
+          },
+          {
+            "src": "fonts/fragment-mono-latin-400-normal.woff2",
+            "format": "woff2",
+            "weight": "400"
+          }
+        ]
+      }
+    },
+    "cover": {
+      "style": "hero-fill",
+      "motif": "///",
+      "heightMm": 296
+    },
+    "logo": "figures/brand-logo.svg",
+    "footer": {
+      "fontFile": "fonts/fragment-mono-merged.ttf",
+      "sizePt": 6.4,
+      "color": "dim",
+      "sideMarginMm": 16,
+      "baselineMm": 11,
+      "pageWord": {
+        "en": "page",
+        "cs": "strana"
+      }
+    }
+  },
+  "figures": {
+    "dir": "figures",
+    "labels": "figures/labels.json",
+    "lint": {
+      "enforceViewBoxWidth": true,
+      "rx": 4,
+      "strokeWidth": 1.2,
+      "fontSizes": [
+        11,
+        9.5,
+        8
+      ],
+      "allowExtraColors": []
+    }
+  },
+  "content": {
+    "dir": "build/content",
+    "doctrine": {
+      "statusTags": [
+        "IMPLEMENTED",
+        "PLANNED",
+        "PROPOSED"
+      ],
+      "requireStatusOnNormative": true,
+      "requireSourceOnStatus": true,
+      "normativeMarkers": {
+        "en": [
+          "must",
+          "shall",
+          "may not",
+          "is required to",
+          "guarantees"
+        ],
+        "cs": [
+          "musí",
+          "nesmí",
+          "je povinen",
+          "zaručuje",
+          "vyžaduje"
+        ]
+      }
+    }
+  },
+  "chrome": {
+    "path": null,
+    "virtualTimeBudgetMs": 10000
+  }
+}
