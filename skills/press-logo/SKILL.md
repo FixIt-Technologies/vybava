@@ -1,5 +1,6 @@
 ---
 name: press-logo
+disable-model-invocation: true
 description: "Logo / brand mark / favicon / brand identity creation and iteration — decision-led brainstorm → SVG takes on a local preview website → standardized ~/Exports/<project>/logo/ package with DESIGN.md, rasters, press-CLI state."
 ---
 
