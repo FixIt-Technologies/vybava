@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/FixIt-Technologies/vybava/internal/press"
@@ -83,9 +84,17 @@ func (rt *runtime) pressInitCommand(resolve resolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(rt.stdout, map[string]any{
-				"project": name, "dir": runner.ProjectDir(name), "created": created,
-			})
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]any{
+					"project": name, "dir": runner.ProjectDir(name), "created": created,
+				})
+			}
+			state := "already present"
+			if created {
+				state = "created"
+			}
+			_, err = fmt.Fprintf(rt.stdout, "%s — %s (%s)\n", name, runner.ProjectDir(name), state)
+			return err
 		},
 	}
 }
@@ -105,6 +114,18 @@ func (rt *runtime) pressConfigCommand(resolve resolver) *cobra.Command {
 				value, err := runner.ConfigGet(name, args[0])
 				if err != nil {
 					return err
+				}
+				if !rt.json {
+					// Scalars print bare so `press config get project.name` is
+					// directly usable in a shell; structures stay JSON.
+					switch v := value.(type) {
+					case string:
+						_, err := fmt.Fprintln(rt.stdout, v)
+						return err
+					case bool, float64:
+						_, err := fmt.Fprintf(rt.stdout, "%v\n", v)
+						return err
+					}
 				}
 				return writeJSON(rt.stdout, value)
 			},
@@ -146,7 +167,10 @@ func (rt *runtime) pressIndexCommand(resolve resolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(rt.stdout, entries)
+			if rt.json {
+				return writeJSON(rt.stdout, entries)
+			}
+			return writeIndexText(rt.stdout, entries)
 		},
 	}
 	list.Flags().StringVar(&kind, "kind", "", "pdf|logo|design (default: all)")
@@ -165,7 +189,15 @@ func (rt *runtime) pressIndexCommand(resolve resolver) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(rt.stdout, map[string]any{"id": id, "created": created})
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]any{"id": id, "created": created})
+			}
+			verb := "updated"
+			if created {
+				verb = "recorded"
+			}
+			_, err = fmt.Fprintf(rt.stdout, "%s %s\n", verb, id)
+			return err
 		},
 	}
 	flags := add.Flags()
@@ -197,7 +229,15 @@ func (rt *runtime) pressAresCommand(project *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return writeJSON(rt.stdout, info)
+			if rt.json {
+				return writeJSON(rt.stdout, info)
+			}
+			for _, key := range []string{"name", "ico", "dic", "legalForm", "address"} {
+				if v, _ := info[key].(string); v != "" {
+					fmt.Fprintf(rt.stdout, "%-10s %s\n", key, v)
+				}
+			}
+			return nil
 		},
 	}
 }
@@ -292,7 +332,15 @@ func (rt *runtime) pressIdentityCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return writeJSON(rt.stdout, map[string]any{"path": path, "created": created})
+				if rt.json {
+					return writeJSON(rt.stdout, map[string]any{"path": path, "created": created})
+				}
+				if created {
+					_, err = fmt.Fprintf(rt.stdout, "created %s — fill it in, then `press identity show`\n", path)
+				} else {
+					_, err = fmt.Fprintf(rt.stdout, "already present: %s\n", path)
+				}
+				return err
 			},
 		},
 		&cobra.Command{
@@ -310,9 +358,7 @@ func (rt *runtime) pressIdentityCommand() *cobra.Command {
 						"missing":  identity.MissingIdentityFields(),
 					})
 				}
-				if err := writeJSON(rt.stdout, identity); err != nil {
-					return err
-				}
+				writeIdentityText(rt.stdout, identity)
 				if missing := identity.MissingIdentityFields(); len(missing) > 0 {
 					fmt.Fprintf(rt.stderr, "press: incomplete identity — fill in %s in %s\n",
 						strings.Join(missing, ", "), press.IdentityPath())
@@ -322,4 +368,54 @@ func (rt *runtime) pressIdentityCommand() *cobra.Command {
 		},
 	)
 	return command
+}
+
+// writeIndexText renders the artifact index for a human reader; `--json` keeps
+// the stable machine shape.
+func writeIndexText(out io.Writer, entries map[string]any) error {
+	empty := true
+	for _, kind := range []string{"pdf", "logo", "design"} {
+		list, _ := entries[kind].([]any)
+		if len(list) == 0 {
+			continue
+		}
+		empty = false
+		fmt.Fprintf(out, "%s\n", kind)
+		for _, item := range list {
+			entry, _ := item.(map[string]any)
+			if entry == nil {
+				continue
+			}
+			field := func(key string) string { v, _ := entry[key].(string); return v }
+			line := "  " + field("id")
+			for _, part := range []string{field("title"), field("file"), field("status")} {
+				if part != "" {
+					line += "  " + part
+				}
+			}
+			fmt.Fprintln(out, line)
+		}
+	}
+	if empty {
+		_, err := fmt.Fprintln(out, "no artifacts recorded yet")
+		return err
+	}
+	return nil
+}
+
+// writeIdentityText prints the local identity as plain fields. Values are the
+// operator's own and never leave the machine, so there is nothing to redact.
+func writeIdentityText(out io.Writer, identity press.Identity) {
+	for _, field := range []struct{ label, value string }{
+		{"name", identity.Issuer.Name}, {"ico", identity.Issuer.ICO},
+		{"dic", identity.Issuer.DIC}, {"address", identity.Issuer.Address},
+		{"dataBox", identity.Issuer.DataBox}, {"email", identity.Issuer.Email},
+		{"web", identity.Issuer.Web},
+	} {
+		fmt.Fprintf(out, "issuer.%-8s %s\n", field.label, field.value)
+	}
+	fmt.Fprintf(out, "commercial.rate     %g %s / %s\n",
+		identity.Commercial.DayRate, identity.Commercial.Currency, identity.Commercial.RateUnit)
+	fmt.Fprintf(out, "commercial.validity %d weeks\n", identity.Commercial.ValidityWeeks)
+	fmt.Fprintf(out, "brand.accent        %s (font %s)\n", identity.Brand.Accent, identity.Brand.Font)
 }

@@ -283,3 +283,52 @@ func TestDoctrineIsEmbedded(t *testing.T) {
 		t.Fatalf("embedded config schema is not valid JSON: %v", err)
 	}
 }
+
+func TestProjectNamesCannotEscapeTheExportsRoot(t *testing.T) {
+	r := testRuntime(t)
+	for _, bad := range []string{"../escape", "../../.config", "a/b", "..", ".", "", "/abs"} {
+		if _, err := r.Resolve(bad); err == nil {
+			t.Fatalf("Resolve(%q) was accepted; it can escape the exports root", bad)
+		}
+		if _, err := r.Init(bad); err == nil {
+			t.Fatalf("Init(%q) was accepted; it can write outside the exports root", bad)
+		}
+	}
+	if _, err := r.Resolve("acme-2026_v2"); err != nil {
+		t.Fatalf("a plain project name must still be accepted: %v", err)
+	}
+}
+
+func TestArtifactFilesCannotEscapeTheProjectDirectory(t *testing.T) {
+	r := testRuntime(t)
+	if _, err := r.Init("acme"); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(filepath.Dir(r.ProjectDir("acme")), "escaped.md")
+	for _, bad := range []string{"../escaped.pdf", "../../escaped.pdf", "/etc/escaped.pdf"} {
+		if _, _, err := r.IndexAdd("acme", Entry{Kind: "pdf", File: bad, Title: "x"}); err == nil {
+			t.Fatalf("IndexAdd accepted --file %q; it can write outside the project", bad)
+		}
+	}
+	if _, err := os.Stat(outside); err == nil {
+		t.Fatalf("a note was created outside the project at %s", outside)
+	}
+	if _, _, err := r.IndexAdd("acme", Entry{Kind: "pdf", File: "offer/ok.pdf", Title: "ok"}); err != nil {
+		t.Fatalf("a normal relative file must still be accepted: %v", err)
+	}
+}
+
+func TestIndexAddReportsNoteFailuresInsteadOfSwallowingThem(t *testing.T) {
+	r := testRuntime(t)
+	if _, err := r.Init("acme"); err != nil {
+		t.Fatal(err)
+	}
+	// A regular file where the note's parent directory must go: MkdirAll fails.
+	blocker := filepath.Join(r.ProjectDir("acme"), "offer")
+	if err := os.WriteFile(blocker, []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.IndexAdd("acme", Entry{Kind: "pdf", File: "offer/demo.pdf", Title: "Demo"}); err == nil {
+		t.Fatal("IndexAdd reported success even though the promised note could not be written")
+	}
+}

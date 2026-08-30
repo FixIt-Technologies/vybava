@@ -99,18 +99,62 @@ func (r Runtime) gitOrigin(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// checkProjectName rejects anything that would let a project name walk out of
+// the exports root. The name becomes a single directory under ~/Exports, so a
+// separator or a dot-segment in it is never legitimate — and `--project` is
+// caller-supplied, which is exactly the value an agent is most likely to pass
+// through from somewhere else.
+func checkProjectName(name string) error {
+	switch {
+	case name == "":
+		return errors.New("project name is empty")
+	case name == "." || name == "..":
+		return fmt.Errorf("invalid project name %q", name)
+	case strings.ContainsAny(name, `/\`+"\x00"):
+		return fmt.Errorf("invalid project name %q: must be a single directory name, not a path", name)
+	}
+	return nil
+}
+
+// resolveInside joins rel under base and proves the result stayed there, so a
+// caller-supplied path such as "../../target" cannot reach outside the project.
+func resolveInside(base, rel string) (string, error) {
+	if rel == "" {
+		return "", errors.New("empty path")
+	}
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("path %q must be relative to the project directory", rel)
+	}
+	joined := filepath.Join(base, rel)
+	inside, err := filepath.Rel(base, joined)
+	if err != nil {
+		return "", err
+	}
+	if inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes the project directory", rel)
+	}
+	return joined, nil
+}
+
 // Resolve returns the project name. An explicit override always wins;
 // otherwise it is the git repository name. Outside a git repository there is
 // no fallback by design — the caller must ask the human and pass a name.
 func (r Runtime) Resolve(override string) (string, error) {
 	if override != "" {
+		if err := checkProjectName(override); err != nil {
+			return "", err
+		}
 		return override, nil
 	}
 	top, err := r.gitTopLevel()
 	if err != nil {
 		return "", errors.New("not inside a git repository — ask the user and pass --project <name>")
 	}
-	return filepath.Base(top), nil
+	name := filepath.Base(top)
+	if err := checkProjectName(name); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // ProjectDir is the deliverable home for one project.
@@ -286,17 +330,23 @@ func (r Runtime) writePressMd(name string, conf map[string]any) error {
 
 // ---------- artifact notes ----------
 
-func (r Runtime) writeNoteIfMissing(name string, ent map[string]any) {
+// writeNoteIfMissing seeds a context note beside a PDF. A failure is returned,
+// never swallowed: IndexAdd has already written config and index by this point,
+// so silently skipping the note would report success over half-applied state.
+func (r Runtime) writeNoteIfMissing(name string, ent map[string]any) error {
 	file, _ := ent["file"].(string)
 	if file == "" {
-		return
+		return nil
 	}
-	notePath := filepath.Join(r.ProjectDir(name), strings.TrimSuffix(file, filepath.Ext(file))+".md")
+	notePath, err := resolveInside(r.ProjectDir(name), strings.TrimSuffix(file, filepath.Ext(file))+".md")
+	if err != nil {
+		return err
+	}
 	if _, err := os.Stat(notePath); err == nil {
-		return // never overwrite an existing note
+		return nil // never overwrite an existing note
 	}
 	if err := os.MkdirAll(filepath.Dir(notePath), 0o755); err != nil {
-		return
+		return fmt.Errorf("create note directory: %w", err)
 	}
 	var b strings.Builder
 	b.WriteString("---\n")
@@ -307,7 +357,10 @@ func (r Runtime) writeNoteIfMissing(name string, ent map[string]any) {
 	}
 	b.WriteString("supersedes: \"\"\n---\n\n")
 	b.WriteString("Context notes for [[" + strings.TrimSuffix(filepath.Base(file), filepath.Ext(file)) + "]].\n")
-	_ = os.WriteFile(notePath, []byte(b.String()), 0o644)
+	if err := os.WriteFile(notePath, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("write note: %w", err)
+	}
+	return nil
 }
 
 // ---------- commands ----------
@@ -315,6 +368,9 @@ func (r Runtime) writeNoteIfMissing(name string, ent map[string]any) {
 // Init creates ~/Exports/<project>/ with a config and a PRESS.md index. It is
 // idempotent: an existing config or index is left exactly as it is.
 func (r Runtime) Init(name string) (created bool, err error) {
+	if err := checkProjectName(name); err != nil {
+		return false, err
+	}
 	dir := r.ProjectDir(name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return false, fmt.Errorf("create project home: %w", err)
@@ -401,6 +457,13 @@ func (r Runtime) IndexAdd(name string, e Entry) (id string, created bool, err er
 	if e.File == "" && e.Title == "" {
 		return "", false, errors.New("--file or --title required")
 	}
+	// Validate before any write: a rejected path must leave config and index
+	// untouched rather than half-updated.
+	if e.File != "" {
+		if _, err := resolveInside(r.ProjectDir(name), e.File); err != nil {
+			return "", false, fmt.Errorf("--file %q: %w", e.File, err)
+		}
+	}
 	conf, err := r.loadConf(name)
 	if err != nil {
 		return "", false, fmt.Errorf("no config for %q — run `press init` first: %w", name, err)
@@ -445,7 +508,9 @@ func (r Runtime) IndexAdd(name string, e Entry) (id string, created bool, err er
 		return "", false, err
 	}
 	if e.Kind == "pdf" {
-		r.writeNoteIfMissing(name, ent)
+		if err := r.writeNoteIfMissing(name, ent); err != nil {
+			return "", false, fmt.Errorf("seed context note: %w", err)
+		}
 	}
 	return id, created, nil
 }
@@ -601,7 +666,10 @@ func (r Runtime) Lint(name string, fix bool) (LintReport, error) {
 				}
 			}
 			if f, _ := ent["file"].(string); f != "" {
-				if _, err := os.Stat(filepath.Join(r.ProjectDir(name), f)); err != nil {
+				resolved, err := resolveInside(r.ProjectDir(name), f)
+				if err != nil {
+					problem("%s[%d]: file %q escapes the project directory", kind, i, f)
+				} else if _, err := os.Stat(resolved); err != nil {
 					problem("%s[%d]: file %q not found on disk", kind, i, f)
 				}
 			}

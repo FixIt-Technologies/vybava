@@ -46,6 +46,9 @@ press doctrine [--schema]        # the family's shared law, or the config schema
 press identity init|path|show    # the machine-local issuer identity
 ```
 
+Output is human-readable by default; `--json` switches every command to its
+stable machine shape, which is what a skill or CI should parse.
+
 Every command also exists under the multicall binary — `vybava press lint` and
 `press lint` are the same code. `--project <name>` overrides git-based
 resolution and is required outside a repository; there is deliberately no

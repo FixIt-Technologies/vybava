@@ -1,7 +1,7 @@
 {
   "$schema": "./pdf-press.config.schema.json",
   "schemaVersion": 1,
-  "pipelineVersion": 3,
+  "pipelineVersion": 5,
   "project": {
     "name": "PROJECT",
     "title": {

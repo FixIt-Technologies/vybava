@@ -24,8 +24,8 @@ Part of the **press skill family** with `press-pdf` and `press-logo`. Shared law
 ## Workflow
 
 1. **Gather inputs via batched multiple-choice rounds** (AskUserQuestion, ≤4 at a time, recommendation-first options with tradeoffs). Only real forks get asked — facts you can look up (ARES identity, source docs, prior offers in `~/Exports`) are your job. Settle at minimum: document type (nabídka / specifikace / dopady), subject + scope, delivery variants and which to recommend, pricing inputs (MD estimates per item, monthly provoz/podpora), milestones/billing split. If the user has a source doc, read it first — never invent scope.
-2. **Copy `template.mjs` into the document home**, `npm init -y && npm install docx@8`, fill the CONTENT section, run `node gen_<name>.mjs`.
-3. **Output** `<Type>_<Subject>_<YYYY-MM-DD>.docx` in the document home. Filename ASCII, underscores.
+2. **Copy `template.mjs` into the document home**, `npm init -y && npm install docx@8`, fill the CONTENT section, run `node gen_<name>.mjs`. The generator resolves its own directory — never call `press resolve` from there, the document home is outside git by design.
+3. **Output** lands beside the script; set `PRESS_OUT=<Type>_<Subject>_<YYYY-MM-DD>.docx` to name it. Filename ASCII, underscores.
 4. **Verify before handing over:** unzip the docx, strip tags from `word/document.xml`, assert key figures/names present, count `word/media` images if any were embedded. Never deliver unverified.
 5. Report the absolute path + a compact pricing/structure summary — always flag that MD estimates and prices are a draft for their sanity-check.
 

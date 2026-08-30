@@ -72,9 +72,15 @@ func TestMissingIdentityFieldsClearsWhenComplete(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.json")
 	t.Setenv("PRESS_IDENTITY", path)
 	full := Identity{
-		Issuer:     Issuer{Name: "Acme s.r.o.", ICO: "12345678", Address: "Somewhere 1, Praha"},
-		Commercial: Commercial{DayRate: 10000, Currency: "CZK"},
-		Brand:      Brand{Accent: "0B5563"},
+		Issuer: Issuer{Name: "Acme s.r.o.", ICO: "12345678", DIC: "CZ12345678", Address: "Somewhere 1, Praha"},
+		Commercial: Commercial{
+			DayRate: 10000, Currency: "CZK", RateUnit: "člověkoden",
+			VATNote: "Ceny jsou uvedeny bez DPH.", ValidityWeeks: 6,
+		},
+		Brand: Brand{
+			Accent: "0B5563", TableHead: "E8F1F2", Zebra: "F4F8F9",
+			Hairline: "CDD7DB", Text: "232323", Muted: "5A6B70", Font: "Arial",
+		},
 	}
 	b, err := json.Marshal(full)
 	if err != nil {
@@ -89,6 +95,11 @@ func TestMissingIdentityFieldsClearsWhenComplete(t *testing.T) {
 	}
 	if missing := identity.MissingIdentityFields(); len(missing) != 0 {
 		t.Fatalf("complete identity still reports %v", missing)
+	}
+	// dataBox, email and web stay optional — an issuer without a data box must
+	// not be blocked from producing a document.
+	if identity.Issuer.DataBox != "" || identity.Issuer.Email != "" || identity.Issuer.Web != "" {
+		t.Fatal("this fixture deliberately leaves the optional fields empty")
 	}
 }
 

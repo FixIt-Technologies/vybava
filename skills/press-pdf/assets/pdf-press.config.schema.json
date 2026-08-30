@@ -533,6 +533,45 @@
               }
             }
           }
+        },
+        "pagination": {
+          "type": "object",
+          "description": "Per-project pagination thresholds for pagecheck.py; each key overrides that check's default.",
+          "additionalProperties": false,
+          "properties": {
+            "minFillRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.25,
+              "description": "A page filled less than this is reported as suspiciously empty."
+            },
+            "minLastPageFill": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.08,
+              "description": "The final page may be short, but not a single stray line."
+            },
+            "maxLinesAfterHeading": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1,
+              "description": "A heading with no more than this many lines beneath it is stranded at a page foot."
+            },
+            "marginTolerancePt": {
+              "type": "number",
+              "minimum": 0,
+              "default": 1.5,
+              "description": "Slack in points before a margin overrun counts as a violation."
+            },
+            "widowGapFactor": {
+              "type": "number",
+              "minimum": 0,
+              "default": 1.8,
+              "description": "Gap divided by median leading above which a page's top line reads as a widow."
+            }
+          }
         }
       }
     },

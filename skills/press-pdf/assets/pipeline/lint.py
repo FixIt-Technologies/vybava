@@ -24,7 +24,7 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-PIPELINE_VERSION = 3
+PIPELINE_VERSION = 5
 
 HEX = re.compile(r"#[0-9a-fA-F]{3,8}\b")
 FONT_SIZE_ATTR = re.compile(r'font-size\s*=\s*"([\d.]+)"')

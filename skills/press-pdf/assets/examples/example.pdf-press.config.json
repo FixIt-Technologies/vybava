@@ -1,7 +1,7 @@
 {
   "$schema": "./pdf-press.config.schema.json",
   "schemaVersion": 1,
-  "pipelineVersion": 3,
+  "pipelineVersion": 5,
   "_note": "Worked reference config: a light-print platform identity expressed as pdf-press tokens — hero-fill cover with a brand motif, two editions, two languages, variable webfonts. Migrating an existing hand-rolled pipeline onto this config additionally requires tokenizing content/*.html (hardcoded titles and .edition-tag.internal/.partner classes become {{title}} / {{editionTagStyle}}) — see references/migrating-an-existing-pipeline.md.",
   "project": {
     "name": "acme",

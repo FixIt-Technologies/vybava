@@ -1,10 +1,14 @@
 // House-style docx generator template (docx-js).
-// Copy to the session scratchpad, `npm install docx@8`, fill the CONTENT section, run with node.
+// Copy into the document home <exports>/<project>/docx/<type>/<slug>/,
+// `npm install docx@8`, fill the CONTENT section, run with node. The rendered
+// docx lands next to this script.
 //
 // Issuer identity, day rate and brand tokens are NEVER hardcoded here — they
 // come from the machine-local identity file that `press identity` manages, so
 // this template is publishable and every issuer gets their own house style.
 import * as fs from 'fs';
+import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import {
   Document, Packer, Paragraph, TextRun, ImageRun, Table, TableRow, TableCell,
@@ -31,9 +35,18 @@ const MUTED = identity.brand.muted;            // captions, header/footer text
 const FONT = identity.brand.font || 'Arial';
 // body sz 21 (10.5pt) · tables sz 19 · A4 with 1134-twip margins
 
-// Deliverables land in ~/Exports/<project>/ — ask press where that is.
-const PROJECT = execFileSync('press', ['resolve'], { encoding: 'utf8' }).trim();
-const OUT = `${process.env.HOME}/Exports/${PROJECT}/offer/CHANGE_ME.docx`;
+// This script is copied INTO the document home
+// (<exports>/<project>/docx/<type>/<slug>/) and run from there, which is
+// normally outside a git repository — so `press resolve` cannot and must not be
+// used here. The output simply lands beside the script.
+//
+// PRESS_OUT overrides the file name; nothing hardcodes an exports root, so a
+// custom PRESS_EXPORTS is honoured automatically by virtue of being where the
+// document home already is.
+const HOME_DIR = path.dirname(fileURLToPath(import.meta.url));
+const OUT = process.env.PRESS_OUT
+  ? path.resolve(HOME_DIR, process.env.PRESS_OUT)
+  : path.join(HOME_DIR, 'CHANGE_ME.docx');
 
 // ── Helpers ──
 const thin = { style: BorderStyle.SINGLE, size: 4, color: BORDER };
@@ -130,7 +143,7 @@ const rateSentence = () =>
 // ── CONTENT — replace everything below ──
 const children = [
   ...titleBlock('Cenová nabídka', 'PŘEDMĚT — dodávka, provoz a podpora', 'CHANGE_ME — obor a zaměření dodavatele'),
-  identityTable({ name: 'KLIENT s.r.o.', ico: '…', dic: '…', address: '…', ds: '…' }, 'D. měsíce RRRR', 'D. měsíce RRRR'),
+  identityTable({ name: 'NÁZEV KLIENTA', ico: '…', dic: '…', address: '…', ds: '…' }, 'D. měsíce RRRR', 'D. měsíce RRRR'),
   spacer(),
   h1('1', 'Předmět nabídky'),
   body('…'),

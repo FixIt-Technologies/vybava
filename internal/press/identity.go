@@ -124,8 +124,13 @@ func InitIdentity() (path string, created bool, err error) {
 }
 
 // MissingIdentityFields lists the fields a document generator needs but that
-// the local file leaves empty, so a skill can fail loudly and specifically
-// instead of rendering a document with blanks in the header.
+// the local file leaves empty, so a skill fails loudly and specifically instead
+// of rendering a document with blanks in the header.
+//
+// This must cover EVERY field the generator consumes, not just the obvious
+// header ones: a missing zebra colour renders an invisible table just as
+// surely as a missing company name renders a nameless one. The list is kept in
+// step with template.mjs by TestGeneratorConsumesOnlyValidatedIdentityFields.
 func (i Identity) MissingIdentityFields() []string {
 	var missing []string
 	for _, f := range []struct {
@@ -134,8 +139,18 @@ func (i Identity) MissingIdentityFields() []string {
 	}{
 		{"issuer.name", i.Issuer.Name},
 		{"issuer.ico", i.Issuer.ICO},
+		{"issuer.dic", i.Issuer.DIC},
 		{"issuer.address", i.Issuer.Address},
+		{"commercial.currency", i.Commercial.Currency},
+		{"commercial.rateUnit", i.Commercial.RateUnit},
+		{"commercial.vatNote", i.Commercial.VATNote},
 		{"brand.accent", i.Brand.Accent},
+		{"brand.tableHead", i.Brand.TableHead},
+		{"brand.zebra", i.Brand.Zebra},
+		{"brand.hairline", i.Brand.Hairline},
+		{"brand.text", i.Brand.Text},
+		{"brand.muted", i.Brand.Muted},
+		{"brand.font", i.Brand.Font},
 	} {
 		if f.value == "" {
 			missing = append(missing, f.name)
@@ -146,3 +161,7 @@ func (i Identity) MissingIdentityFields() []string {
 	}
 	return missing
 }
+
+// issuer.dataBox, email and web are deliberately optional: the identity table
+// prints an em dash for an absent data box, and the header never shows the
+// other two.
