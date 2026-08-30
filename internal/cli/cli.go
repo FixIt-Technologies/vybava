@@ -494,6 +494,13 @@ func (rt *runtime) ingressgenApplet() *cobra.Command {
 func (rt *runtime) ingressgenCommand(use string) *cobra.Command {
 	command := &cobra.Command{Use: use, Short: "Render default-deny DOCKER-USER rules from a manifest"}
 	var outputPath string
+	type renderResult struct {
+		Status   string `json:"status"`
+		Manifest string `json:"manifest"`
+		Output   string `json:"output,omitempty"`
+		Written  bool   `json:"written"`
+		Rules    string `json:"rules,omitempty"`
+	}
 	render := &cobra.Command{
 		Use:   "render <manifest>",
 		Short: "Render an iptables-restore ruleset",
@@ -508,10 +515,20 @@ func (rt *runtime) ingressgenCommand(use string) *cobra.Command {
 				return err
 			}
 			if outputPath == "" {
+				if rt.json {
+					return writeJSON(rt.stdout, renderResult{Status: "ok", Manifest: args[0], Rules: string(rules)})
+				}
 				_, err = rt.stdout.Write(rules)
 				return err
 			}
-			return os.WriteFile(outputPath, rules, 0o644)
+			if err := os.WriteFile(outputPath, rules, 0o644); err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, renderResult{Status: "ok", Manifest: args[0], Output: outputPath, Written: true})
+			}
+			_, err = fmt.Fprintf(rt.stdout, "wrote %s\n", outputPath)
+			return err
 		},
 	}
 	render.Flags().StringVarP(&outputPath, "output", "o", "", "write rendered rules to this path")
@@ -543,7 +560,32 @@ func (rt *runtime) ingressgenCommand(use string) *cobra.Command {
 			return err
 		},
 	}
-	command.AddCommand(render, check)
+	var restorePath string
+	apply := &cobra.Command{
+		Use:   "apply <manifest>",
+		Short: "Syntax-check and apply without flushing unrelated filter chains",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			manifest, err := ingressgen.Load(args[0])
+			if err != nil {
+				return err
+			}
+			rules, err := ingressgen.Render(manifest)
+			if err != nil {
+				return err
+			}
+			if err := ingressgen.Apply(cmd.Context(), restorePath, rules); err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]string{"status": "ok", "manifest": args[0]})
+			}
+			_, err = fmt.Fprintf(rt.stdout, "applied %s with --noflush\n", args[0])
+			return err
+		},
+	}
+	apply.Flags().StringVar(&restorePath, "iptables-restore", "/usr/sbin/iptables-restore", "iptables-restore binary (tests and nonstandard hosts)")
+	command.AddCommand(render, check, apply)
 	return command
 }
 

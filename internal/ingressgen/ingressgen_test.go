@@ -1,6 +1,9 @@
 package ingressgen
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,7 +41,11 @@ func TestValidateRejectsUnsafeOrFailOpenManifests(t *testing.T) {
 	}{
 		{"unsupported version", func(m *Manifest) { m.SchemaVersion = 2 }, "schema_version"},
 		{"unsafe chain mutation", func(m *Manifest) { m.Rules[0].Args = []string{"-F", "INPUT", "-j", "RETURN"} }, "manage chains"},
+		{"long chain mutation", func(m *Manifest) { m.Rules[0].Args = []string{"--new-chain", "X", "-j", "RETURN"} }, "manage chains"},
 		{"newline injection", func(m *Manifest) { m.Rules[0].Args[0] = "-m\n-A INPUT -j ACCEPT" }, "unsafe argument"},
+		{"space injection", func(m *Manifest) { m.Rules[0].Args[0] = "-m conntrack" }, "unsafe argument"},
+		{"wrong chain", func(m *Manifest) { m.Chain = "INPUT" }, "DOCKER-USER"},
+		{"unconditional return", func(m *Manifest) { m.Rules[0].Args = []string{"-j", "RETURN"} }, "fail-open"},
 		{"missing terminal drop", func(m *Manifest) { m.Rules[len(m.Rules)-1].Args = []string{"-j", "RETURN"} }, "final rule"},
 		{"duplicate rule", func(m *Manifest) { m.Rules = append([]Rule{m.Rules[0]}, m.Rules...) }, "duplicates"},
 	}
@@ -50,6 +57,27 @@ func TestValidateRejectsUnsafeOrFailOpenManifests(t *testing.T) {
 				t.Fatalf("Validate() error = %v, want substring %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestApplyAlwaysTestsAndUsesNoFlush(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "calls")
+	fake := filepath.Join(dir, "iptables-restore")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$CALL_LOG\"\ncat >/dev/null\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CALL_LOG", logPath)
+	if err := Apply(context.Background(), fake, []byte("rules\n")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "--test --noflush\n--noflush\n" {
+		t.Fatalf("application argv = %q", got)
 	}
 }
 

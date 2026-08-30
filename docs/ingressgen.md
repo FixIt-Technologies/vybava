@@ -7,10 +7,12 @@ policy is reviewed as data and generated output cannot silently drift.
 ```sh
 ingressgen render docker-ingress.yaml -o docker-user.rules
 ingressgen check docker-ingress.yaml docker-user.rules
+sudo ingressgen apply docker-ingress.yaml
 ```
 
 Each manifest rule is an argument array, never a shell string. The renderer
-rejects embedded newlines, chain-management arguments, duplicate rules, and a
+accepts only `DOCKER-USER`, rejects whitespace/quoting injection, every chain
+management option, duplicate rules, unconditional fail-open jumps, and a
 ruleset whose final rule is not exactly `-j DROP`.
 
 ```yaml
@@ -23,6 +25,9 @@ rules:
     args: [-j, DROP]
 ```
 
-The generated file deliberately owns only the declared chain. Host INPUT,
-OUTPUT, FORWARD, UFW, and Docker structural chains remain under their existing
-owners.
+The generated file deliberately owns only `DOCKER-USER`. Never feed this
+partial table file to bare `iptables-restore`: its default behavior flushes the
+whole filter table. `ingressgen apply` is the supported application path; it
+first syntax-checks and then applies with mandatory `--noflush` both times.
+Host INPUT, OUTPUT, FORWARD, UFW, and Docker structural chains therefore remain
+under their existing owners.
