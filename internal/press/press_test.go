@@ -332,3 +332,24 @@ func TestIndexAddReportsNoteFailuresInsteadOfSwallowingThem(t *testing.T) {
 		t.Fatal("IndexAdd reported success even though the promised note could not be written")
 	}
 }
+
+// resolveInside compares lexical paths, which a symlink inside the project
+// defeats: <exports>/acme/offer -> /somewhere/else still looks like it is
+// under <exports>/acme.
+func TestArtifactFilesCannotEscapeThroughASymlink(t *testing.T) {
+	r := testRuntime(t)
+	if _, err := r.Init("acme"); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	link := filepath.Join(r.ProjectDir("acme"), "offer")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := r.IndexAdd("acme", Entry{Kind: "pdf", File: "offer/demo.pdf", Title: "Demo"}); err == nil {
+		t.Fatal("IndexAdd followed a symlink out of the project")
+	}
+	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
+		t.Fatalf("a note was written through the symlink into %s", outside)
+	}
+}

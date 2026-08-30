@@ -40,13 +40,13 @@ const FONT = identity.brand.font || 'Arial';
 // normally outside a git repository — so `press resolve` cannot and must not be
 // used here. The output simply lands beside the script.
 //
-// PRESS_OUT overrides the file name; nothing hardcodes an exports root, so a
-// custom PRESS_EXPORTS is honoured automatically by virtue of being where the
-// document home already is.
+// PRESS_OUT overrides the file NAME only — it is deliberately reduced to its
+// basename so the deliverable cannot be written outside the document home, and
+// so `press index add --file` keeps describing where the file really is.
+// Nothing hardcodes an exports root, so a custom PRESS_EXPORTS is honoured
+// automatically by virtue of being where the document home already is.
 const HOME_DIR = path.dirname(fileURLToPath(import.meta.url));
-const OUT = process.env.PRESS_OUT
-  ? path.resolve(HOME_DIR, process.env.PRESS_OUT)
-  : path.join(HOME_DIR, 'CHANGE_ME.docx');
+const OUT = path.join(HOME_DIR, path.basename(process.env.PRESS_OUT || 'CHANGE_ME.docx'));
 
 // ── Helpers ──
 const thin = { style: BorderStyle.SINGLE, size: 4, color: BORDER };

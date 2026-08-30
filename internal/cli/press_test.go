@@ -154,3 +154,35 @@ func TestPressDoctrineServesEmbeddedLaw(t *testing.T) {
 		t.Fatalf("press doctrine --schema is not valid JSON: %v", err)
 	}
 }
+
+// The persistent --json flag is accepted by every descendant, so every
+// descendant must honour it — an automation that gets bare text back from
+// `config set --json` has no way to tell success from a stray log line.
+func TestPressJSONFlagIsHonouredByEverySubcommand(t *testing.T) {
+	t.Setenv("PRESS_EXPORTS", t.TempDir())
+	t.Setenv("PRESS_IDENTITY", filepath.Join(t.TempDir(), "identity.json"))
+	if _, _, err := runPress(t, "init", "--project", "acme"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runPress(t, "identity", "init"); err != nil {
+		t.Fatal(err)
+	}
+	cases := [][]string{
+		{"config", "set", "project.type", "platform", "--project", "acme", "--json"},
+		{"identity", "path", "--json"},
+		{"doctrine", "--json"},
+		{"doctrine", "--schema", "--json"},
+		{"identity", "show", "--json"},
+		{"resolve", "--project", "acme", "--json"},
+	}
+	for _, args := range cases {
+		stdout, _, err := runPress(t, args...)
+		if err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+		var probe any
+		if err := json.Unmarshal([]byte(stdout), &probe); err != nil {
+			t.Errorf("`press %s` with --json emitted non-JSON: %q", strings.Join(args, " "), stdout)
+		}
+	}
+}

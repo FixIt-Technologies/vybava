@@ -116,8 +116,20 @@ func checkProjectName(name string) error {
 	return nil
 }
 
+// escapes reports whether target sits outside base, given both as clean paths.
+func escapes(base, target string) bool {
+	inside, err := filepath.Rel(base, target)
+	return err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator))
+}
+
 // resolveInside joins rel under base and proves the result stayed there, so a
 // caller-supplied path such as "../../target" cannot reach outside the project.
+//
+// The lexical check alone is not enough: a symlink inside the project — say
+// <exports>/acme/offer pointing elsewhere — satisfies it while still writing
+// outside. So the real paths are compared too, resolving the deepest ancestor
+// that exists yet (the leaf usually does not, since this runs before creating
+// it).
 func resolveInside(base, rel string) (string, error) {
 	if rel == "" {
 		return "", errors.New("empty path")
@@ -126,12 +138,34 @@ func resolveInside(base, rel string) (string, error) {
 		return "", fmt.Errorf("path %q must be relative to the project directory", rel)
 	}
 	joined := filepath.Join(base, rel)
-	inside, err := filepath.Rel(base, joined)
-	if err != nil {
-		return "", err
-	}
-	if inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+	if escapes(base, joined) {
 		return "", fmt.Errorf("path %q escapes the project directory", rel)
+	}
+
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return joined, nil // nothing exists to traverse yet
+		}
+		return "", fmt.Errorf("resolve project directory: %w", err)
+	}
+	probe := joined
+	for {
+		if _, err := os.Lstat(probe); err == nil {
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe || len(parent) < len(base) {
+			return joined, nil // no existing ancestor below base to resolve
+		}
+		probe = parent
+	}
+	realProbe, err := filepath.EvalSymlinks(probe)
+	if err != nil {
+		return "", fmt.Errorf("resolve %q: %w", rel, err)
+	}
+	if realProbe != realBase && escapes(realBase, realProbe) {
+		return "", fmt.Errorf("path %q escapes the project directory through a symlink", rel)
 	}
 	return joined, nil
 }

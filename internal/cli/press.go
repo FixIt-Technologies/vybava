@@ -142,6 +142,9 @@ func (rt *runtime) pressConfigCommand(resolve resolver) *cobra.Command {
 				if err := runner.ConfigSet(name, args[0], args[1]); err != nil {
 					return err
 				}
+				if rt.json {
+					return writeJSON(rt.stdout, map[string]any{"path": args[0], "ok": true})
+				}
 				_, err = fmt.Fprintln(rt.stdout, "ok")
 				return err
 			},
@@ -234,7 +237,9 @@ func (rt *runtime) pressAresCommand(project *string) *cobra.Command {
 			}
 			for _, key := range []string{"name", "ico", "dic", "legalForm", "address"} {
 				if v, _ := info[key].(string); v != "" {
-					fmt.Fprintf(rt.stdout, "%-10s %s\n", key, v)
+					if _, err := fmt.Fprintf(rt.stdout, "%-10s %s\n", key, v); err != nil {
+						return err
+					}
 				}
 			}
 			return nil
@@ -262,14 +267,17 @@ func (rt *runtime) pressLintCommand(resolve resolver) *cobra.Command {
 					return err
 				}
 			} else {
-				for _, fixed := range report.Fixed {
-					fmt.Fprintln(rt.stdout, "fixed: "+fixed)
-				}
-				for _, problem := range report.Problems {
-					fmt.Fprintln(rt.stdout, "problem: "+problem)
+				for _, line := range append(
+					prefixed("fixed: ", report.Fixed), prefixed("problem: ", report.Problems)...,
+				) {
+					if _, err := fmt.Fprintln(rt.stdout, line); err != nil {
+						return err
+					}
 				}
 				if report.OK() {
-					fmt.Fprintln(rt.stdout, "ok")
+					if _, err := fmt.Fprintln(rt.stdout, "ok"); err != nil {
+						return err
+					}
 				}
 			}
 			if !report.OK() {
@@ -293,8 +301,19 @@ func (rt *runtime) pressDoctrineCommand() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(*cobra.Command, []string) error {
 			text := press.Conventions()
+			kind := "conventions"
 			if schema {
 				text = press.ConfSchema()
+				kind = "schema"
+			}
+			if rt.json {
+				// --schema is already JSON; emit it as itself rather than a
+				// string-wrapped copy an automation would have to unwrap twice.
+				if schema {
+					_, err := fmt.Fprintln(rt.stdout, strings.TrimRight(text, "\n"))
+					return err
+				}
+				return writeJSON(rt.stdout, map[string]string{kind: text})
 			}
 			_, err := fmt.Fprintln(rt.stdout, strings.TrimRight(text, "\n"))
 			return err
@@ -319,6 +338,9 @@ func (rt *runtime) pressIdentityCommand() *cobra.Command {
 			Short: "Print the identity file location",
 			Args:  cobra.NoArgs,
 			RunE: func(*cobra.Command, []string) error {
+				if rt.json {
+					return writeJSON(rt.stdout, map[string]string{"path": press.IdentityPath()})
+				}
 				_, err := fmt.Fprintln(rt.stdout, press.IdentityPath())
 				return err
 			},
@@ -358,7 +380,9 @@ func (rt *runtime) pressIdentityCommand() *cobra.Command {
 						"missing":  identity.MissingIdentityFields(),
 					})
 				}
-				writeIdentityText(rt.stdout, identity)
+				if err := writeIdentityText(rt.stdout, identity); err != nil {
+					return err
+				}
 				if missing := identity.MissingIdentityFields(); len(missing) > 0 {
 					fmt.Fprintf(rt.stderr, "press: incomplete identity — fill in %s in %s\n",
 						strings.Join(missing, ", "), press.IdentityPath())
@@ -380,7 +404,9 @@ func writeIndexText(out io.Writer, entries map[string]any) error {
 			continue
 		}
 		empty = false
-		fmt.Fprintf(out, "%s\n", kind)
+		if _, err := fmt.Fprintf(out, "%s\n", kind); err != nil {
+			return err
+		}
 		for _, item := range list {
 			entry, _ := item.(map[string]any)
 			if entry == nil {
@@ -393,7 +419,9 @@ func writeIndexText(out io.Writer, entries map[string]any) error {
 					line += "  " + part
 				}
 			}
-			fmt.Fprintln(out, line)
+			if _, err := fmt.Fprintln(out, line); err != nil {
+				return err
+			}
 		}
 	}
 	if empty {
@@ -405,17 +433,32 @@ func writeIndexText(out io.Writer, entries map[string]any) error {
 
 // writeIdentityText prints the local identity as plain fields. Values are the
 // operator's own and never leave the machine, so there is nothing to redact.
-func writeIdentityText(out io.Writer, identity press.Identity) {
+func writeIdentityText(out io.Writer, identity press.Identity) error {
 	for _, field := range []struct{ label, value string }{
 		{"name", identity.Issuer.Name}, {"ico", identity.Issuer.ICO},
 		{"dic", identity.Issuer.DIC}, {"address", identity.Issuer.Address},
 		{"dataBox", identity.Issuer.DataBox}, {"email", identity.Issuer.Email},
 		{"web", identity.Issuer.Web},
 	} {
-		fmt.Fprintf(out, "issuer.%-8s %s\n", field.label, field.value)
+		if _, err := fmt.Fprintf(out, "issuer.%-8s %s\n", field.label, field.value); err != nil {
+			return err
+		}
 	}
-	fmt.Fprintf(out, "commercial.rate     %g %s / %s\n",
-		identity.Commercial.DayRate, identity.Commercial.Currency, identity.Commercial.RateUnit)
-	fmt.Fprintf(out, "commercial.validity %d weeks\n", identity.Commercial.ValidityWeeks)
-	fmt.Fprintf(out, "brand.accent        %s (font %s)\n", identity.Brand.Accent, identity.Brand.Font)
+	if _, err := fmt.Fprintf(out, "commercial.rate     %g %s / %s\n",
+		identity.Commercial.DayRate, identity.Commercial.Currency, identity.Commercial.RateUnit); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "commercial.validity %d weeks\n", identity.Commercial.ValidityWeeks); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(out, "brand.accent        %s (font %s)\n", identity.Brand.Accent, identity.Brand.Font)
+	return err
+}
+
+func prefixed(prefix string, values []string) []string {
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = prefix + v
+	}
+	return out
 }
