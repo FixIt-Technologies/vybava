@@ -2,6 +2,7 @@
 name: project-identity-string-is-not-authorization
 description: Never derive privilege from a name string a user can register — reserve privileged identity names at creation.
 type: project
+status: active
 ---
 
 In shrt's token auth (PR #15, 2026-08-28), `adminOnly` trusted the identity
