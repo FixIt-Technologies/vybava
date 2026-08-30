@@ -48,16 +48,19 @@ type Runtime struct {
 	Dir string
 	// HTTP is the client used for ARES lookups.
 	HTTP *http.Client
-	Out  io.Writer
+	// AresEndpoint is the registry base URL; tests point it at a stub.
+	AresEndpoint string
+	Out          io.Writer
 }
 
 // New builds a Runtime from the process environment.
 func New(out io.Writer) Runtime {
 	return Runtime{
-		ExportsRoot: DefaultExportsRoot(),
-		Now:         func() string { return time.Now().UTC().Format(time.RFC3339) },
-		HTTP:        &http.Client{Timeout: 15 * time.Second},
-		Out:         out,
+		ExportsRoot:  DefaultExportsRoot(),
+		Now:          func() string { return time.Now().UTC().Format(time.RFC3339) },
+		HTTP:         &http.Client{Timeout: 15 * time.Second},
+		AresEndpoint: aresEndpoint,
+		Out:          out,
 	}
 }
 
@@ -464,6 +467,11 @@ func (r Runtime) IndexList(name, kind string) (map[string]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("no config for %q — run `press init` first: %w", name, err)
 	}
+	if kind != "" {
+		if section, _ := entriesKey(kind); section == "" {
+			return nil, fmt.Errorf("unknown kind %q: want pdf, logo or design", kind)
+		}
+	}
 	out := map[string]any{}
 	for _, k := range []string{"pdf", "logo", "design"} {
 		if kind != "" && kind != k {
@@ -572,7 +580,11 @@ func (r Runtime) Ares(name, ico string) (map[string]any, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 15 * time.Second}
 	}
-	resp, err := client.Get(aresEndpoint + ico)
+	endpoint := r.AresEndpoint
+	if endpoint == "" {
+		endpoint = aresEndpoint
+	}
+	resp, err := client.Get(endpoint + ico)
 	if err != nil {
 		return nil, fmt.Errorf("ARES request failed: %w", err)
 	}
@@ -605,10 +617,15 @@ func (r Runtime) Ares(name, ico string) (map[string]any, error) {
 		"address":   str("sidlo.textovaAdresa"),
 		"fetchedAt": r.stamp(),
 	}
+	// The command documents that a successful lookup is cached. If the write
+	// fails, say so rather than returning data that later calls will re-fetch
+	// while believing they are served from cache.
 	if name != "" {
 		if conf, err := r.loadConf(name); err == nil {
 			setPath(conf, "ares."+ico, info)
-			_ = r.saveConf(name, conf)
+			if err := r.saveConf(name, conf); err != nil {
+				return nil, fmt.Errorf("cache ARES result for %s: %w", ico, err)
+			}
 		}
 	}
 	return info, nil

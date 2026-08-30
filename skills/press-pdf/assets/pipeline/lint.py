@@ -738,19 +738,31 @@ def main() -> int:
         return 2
     root = cfg_path.parent
 
+    if not isinstance(cfg, dict):
+        print(f"pdf-press: {cfg_path} must contain a JSON object, got {type(cfg).__name__}")
+        return 2
+
     rep = Report()
     check_managed_stylesheet(build_dir / "style.css", rep)
-    check_config(cfg, root, rep)
-    labels_rel = (cfg.get("figures") or {}).get("labels", "figures/labels.json")
-    labels_path = root / labels_rel
-    labels: dict = {}
-    if labels_path.exists():
-        try:
-            labels = json.loads(labels_path.read_text())
-        except json.JSONDecodeError as e:
-            rep.error(labels_rel, f"not valid JSON: {e}")
-    fig_files = check_figures(cfg, root, labels, rep)
-    check_content(cfg, root, labels, rep, fig_files)
+    # A structurally incomplete config is a CONFIG error, not a crash: the
+    # checks below index required members directly, and a traceback tells the
+    # author nothing about which key is missing.
+    try:
+        check_config(cfg, root, rep)
+        labels_rel = (cfg.get("figures") or {}).get("labels", "figures/labels.json")
+        labels_path = root / labels_rel
+        labels: dict = {}
+        if labels_path.exists():
+            try:
+                labels = json.loads(labels_path.read_text())
+            except json.JSONDecodeError as e:
+                rep.error(labels_rel, f"not valid JSON: {e}")
+        fig_files = check_figures(cfg, root, labels, rep)
+        check_content(cfg, root, labels, rep, fig_files)
+    except (KeyError, TypeError, AttributeError) as e:
+        print(f"pdf-press: {cfg_path} is structurally invalid — {e.__class__.__name__}: {e}")
+        print("  run `/press-pdf setup` or compare against assets/pdf-press.config.schema.json")
+        return 2
     return rep.print(args.strict)
 
 

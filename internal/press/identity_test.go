@@ -114,3 +114,27 @@ func TestLoadIdentityRejectsBrokenJSON(t *testing.T) {
 		t.Fatalf("err = %v, want a clear JSON complaint", err)
 	}
 }
+
+// InitIdentity guaranteed 0600 only on creation; a file that already existed
+// with looser permissions was reported as fine.
+func TestInitIdentityRepairsLoosePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "identity.json")
+	t.Setenv("PRESS_IDENTITY", path)
+	if err := os.WriteFile(path, []byte(`{"issuer":{"name":"Acme"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, created, err := InitIdentity(); err != nil || created {
+		t.Fatalf("init over an existing file: created=%v err=%v", created, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("mode = %v, want 0600 — a pre-existing identity file must be tightened", perm)
+	}
+	identity, err := LoadIdentity()
+	if err != nil || identity.Issuer.Name != "Acme" {
+		t.Fatalf("tightening permissions must not touch content: %+v (%v)", identity, err)
+	}
+}

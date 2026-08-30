@@ -557,9 +557,20 @@ def stamp(pdf_path: Path, cfg: dict, root: Path, edition: str, lang: str, versio
     })
 
     # Deterministic trailer /ID — pypdf would otherwise seed it from the clock.
+    #
+    # The seed must cover the document's CONTENT, not just its labels: two
+    # editions that differ only in prose, figures, styling or fonts would
+    # otherwise share an /ID. So the writer is serialised once to memory with a
+    # placeholder ID, and the real ID is the digest of those bytes. The
+    # placeholder is itself deterministic, so the probe bytes are too.
     seed = f"{cfg['project']['name']}|{edition}|{lang}|{version}".encode()
-    digest = hashlib.md5(seed).digest()
+    placeholder = hashlib.md5(seed).digest()
+    digest = placeholder
     try:
+        writer._ID = ArrayObject([ByteStringObject(placeholder), ByteStringObject(placeholder)])
+        probe = BytesIO()
+        writer.write(probe)
+        digest = hashlib.md5(seed + probe.getvalue()).digest()
         writer._ID = ArrayObject([ByteStringObject(digest), ByteStringObject(digest)])
     except Exception:  # noqa: BLE001 — pypdf internal; a nondeterministic ID is not fatal
         print("pdf-press: warning — could not pin the PDF trailer /ID (pypdf internals moved)")

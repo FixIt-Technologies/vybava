@@ -104,7 +104,15 @@ func LoadIdentity() (Identity, error) {
 // It never overwrites real values.
 func InitIdentity() (path string, created bool, err error) {
 	path = IdentityPath()
-	if _, err := os.Stat(path); err == nil {
+	if info, err := os.Stat(path); err == nil {
+		// The 0600 guarantee has to hold for a file that already exists too —
+		// an editor, a restore, or a hand-created file can easily be 0644, and
+		// this holds an issuer's registry identity and commercial rate.
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			if err := os.Chmod(path, 0o600); err != nil {
+				return path, false, fmt.Errorf("tighten identity permissions: %w", err)
+			}
+		}
 		return path, false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return path, false, err

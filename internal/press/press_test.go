@@ -2,6 +2,8 @@ package press
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -351,5 +353,47 @@ func TestArtifactFilesCannotEscapeThroughASymlink(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(outside); len(entries) != 0 {
 		t.Fatalf("a note was written through the symlink into %s", outside)
+	}
+}
+
+func TestIndexListRejectsAnUnknownKind(t *testing.T) {
+	r := testRuntime(t)
+	if _, err := r.Init("acme"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.IndexList("acme", "typo"); err == nil {
+		t.Fatal("IndexList accepted an unknown --kind and returned empty success")
+	}
+	if _, err := r.IndexList("acme", ""); err != nil {
+		t.Fatalf("an empty kind means all kinds: %v", err)
+	}
+	if _, err := r.IndexList("acme", "pdf"); err != nil {
+		t.Fatalf("a known kind must work: %v", err)
+	}
+}
+
+func TestAresSurfacesACacheWriteFailure(t *testing.T) {
+	r := testRuntime(t)
+	if _, err := r.Init("acme"); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"obchodniJmeno":"Acme s.r.o.","dic":"CZ12345678"}`))
+	}))
+	defer server.Close()
+	r.AresEndpoint = server.URL + "/"
+	r.HTTP = server.Client()
+
+	// Make the config unwritable so the cache write must fail.
+	if err := os.Chmod(r.confPath("acme"), 0o400); err != nil {
+		t.Skipf("cannot make the config read-only: %v", err)
+	}
+	if err := os.Chmod(r.ProjectDir("acme"), 0o500); err != nil {
+		t.Skipf("cannot make the project dir read-only: %v", err)
+	}
+	defer func() { _ = os.Chmod(r.ProjectDir("acme"), 0o700) }()
+
+	if _, err := r.Ares("acme", "12345678"); err == nil {
+		t.Fatal("Ares reported success while the promised cache write failed")
 	}
 }
