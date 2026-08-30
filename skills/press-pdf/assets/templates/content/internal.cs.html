@@ -1,0 +1,161 @@
+<!-- pdf-press starter content — <edition>.<lang>.html
+     Tokens resolved by build.py: {{title}} {{subtitle}} {{label}} {{marking}}
+     {{version}} {{logo}} {{editionTagStyle}} {{project}} {{edition}} {{lang}}
+     {{fig:slug}} inlines figures/<slug>.svg · {{t:key}} pulls a shared label.
+
+     Chapter, section, and figure numbers are AUTO-NUMBERED by CSS counters: leave
+     <span class="no"></span> and <span class="fig-n"></span> empty and they fill
+     themselves. Never type a number — two editions that include different chapters
+     will disagree with any number you hardcode.
+
+     Every block that says the system MUST do something carries data-status.
+     IMPLEMENTED additionally carries data-source with a repo path. lint.py
+     enforces both — that is what keeps the document contractual. -->
+
+<div class="cover">
+  <div class="cover-head">
+    <div class="logo">{{logo}}</div>
+    <div class="brand">{{project}}</div>
+  </div>
+  <h1>{{title}}</h1>
+  <p class="subtitle">{{subtitle}}</p>
+  <div class="edition-tag {{editionTagStyle}}">{{label}}</div>
+  <div class="meta">
+    <div>
+      {{version}}<br>
+      {{label}} · {{lang}}
+    </div>
+    <div class="confidential">{{marking}}</div>
+  </div>
+</div>
+
+<section class="toc">
+  <h2><span class="no">0</span> Obsah</h2>
+  <ol>
+    <li><span class="no"></span> Účel a rozsah dokumentu</li>
+    <li><span class="no"></span> Kontext systému</li>
+    <li><span class="no"></span> Scénáře a rozhraní</li>
+    <li><span class="no"></span> Prioritizace příkazů</li>
+    <li><span class="no"></span> Havarijní chování</li>
+    <li><span class="no"></span> Otevřené body</li>
+  </ol>
+</section>
+
+<section class="chapter">
+  <p class="kicker">{{t:chapter.word}} <span class="no"></span></p>
+  <h2><span class="no"></span> Účel a rozsah dokumentu</h2>
+  <p class="lead">Tento dokument popisuje architekturu platformy {{project}} v rozsahu
+    potřebném pro <strong>{{label}}</strong>. Verze {{version}}.</p>
+
+  <p>Každé tvrzení v dokumentu je opatřeno stavem: <span data-status="IMPLEMENTED" data-source="README.md">stav
+    odpovídající nasazenému kódu</span> nebo <span data-status="PLANNED">stav plánovaný</span>.
+    Bez tohoto rozlišení není specifikace použitelná jako podklad pro dodavatele.</p>
+
+  <div class="callout">
+    <div class="callout-title">Rozsah vydání</div>
+    Popis rozsahu tohoto vydání — co dokument záměrně neobsahuje a kde je hlubší referenci hledat.
+  </div>
+</section>
+
+<section class="chapter">
+  <p class="kicker">{{t:chapter.word}} <span class="no"></span></p>
+  <h2><span class="no"></span> Kontext systému</h2>
+  <p>Jedna věta o tom, co diagram ukazuje a proč je hranice systému nakreslena právě takto.</p>
+
+  <figure>
+    {{fig:01-system-context}}
+    <figcaption><span class="fig-no">{{t:fig.word}} <span class="fig-n"></span></span> — kontext systému: aktéři, hranice a externí protistrany.</figcaption>
+  </figure>
+
+  <div class="chips">
+    <span class="chip" style="color: var(--grid); border-color: var(--grid); background: var(--grid-wash);">síť</span>
+    <span class="chip" style="color: var(--bat); border-color: var(--bat); background: var(--bat-wash);">provozní data</span>
+    <span class="chip" style="color: var(--alarm); border-color: var(--alarm); background: var(--alarm-wash);">alarm</span>
+  </div>
+  <p class="small">Barvy v diagramech nesou význam, nikoli dekoraci — legenda platí pro celý dokument.</p>
+</section>
+
+<section class="chapter">
+  <p class="kicker">{{t:chapter.word}} <span class="no"></span></p>
+  <h2><span class="no"></span> Scénáře a rozhraní</h2>
+  <p>Pro každý scénář: spouštěč, rozhraní, payload, očekávaná odpověď a chování při chybě.
+    Tabulku generujte z <code>openapi.json</code> / <code>asyncapi.yaml</code>, nikdy ji nepřepisujte ručně.</p>
+
+  <h3><span class="no"></span> Přehled endpointů</h3>
+  <table class="breakable">
+    <thead>
+      <tr><th>Scénář</th><th>Rozhraní</th><th>Payload</th><th>Stav</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>S1 — název scénáře</td>
+        <td><code>POST /v1/resource</code></td>
+        <td><code>{ "field": 0 }</code></td>
+        <td><span data-status="IMPLEMENTED" data-source="internal/api/resource.go"></span></td>
+      </tr>
+      <tr>
+        <td>S2 — název scénáře</td>
+        <td><code>site.command.{id}</code></td>
+        <td><code>{ "setpointW": 0 }</code></td>
+        <td><span data-status="PLANNED"></span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3><span class="no"></span> Payload — příklad</h3>
+  <pre><code>{
+  "id": "01J000000000000000000000",
+  "issuedAt": "2026-07-26T10:00:00Z",
+  "setpointW": -25000
+}</code></pre>
+</section>
+
+<section class="chapter">
+  <p class="kicker">{{t:chapter.word}} <span class="no"></span></p>
+  <h2><span class="no"></span> Prioritizace příkazů</h2>
+  <p>Popis arbitráže: co vyhrává, když dorazí dva pokyny současně. Uveďte normu, ze které
+    hierarchie vychází — vlastní hierarchie vymyšlená ad hoc je pro dodavatele nepoužitelná.</p>
+
+  <table>
+    <thead><tr><th>Priorita</th><th>Zdroj pokynu</th><th>Chování</th><th>Stav</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>bezpečnostní omezení</td><td>přebíjí vše ostatní</td><td><span data-status="PLANNED"></span></td></tr>
+      <tr><td>2</td><td>plán</td><td>platí v rámci okna</td><td><span data-status="PLANNED"></span></td></tr>
+      <tr><td>3</td><td>přímý příkaz</td><td>platí do expirace</td><td><span data-status="PLANNED"></span></td></tr>
+    </tbody>
+  </table>
+
+  <p data-status="PLANNED">Při konfliktu dvou pokynů se stejnou prioritou musí zvítězit novější
+    a starší musí být zamítnut s doložitelným důvodem.</p>
+</section>
+
+<section class="chapter">
+  <p class="kicker">{{t:chapter.word}} <span class="no"></span></p>
+  <h2><span class="no"></span> Havarijní chování</h2>
+  <p>Chování při ztrátě komunikace, při nedostupnosti nadřazeného systému a při návratu do provozu.</p>
+
+  <div class="callout alarm">
+    <div class="callout-title">Bezpečný stav</div>
+    <span data-status="PLANNED">Po uplynutí watchdog intervalu musí zařízení přejít do
+      definovaného bezpečného stavu bez zásahu operátora.</span>
+  </div>
+
+  <p>Popis obnovy: co se stane s pokyny, které během výpadku expirovaly, a jak se stav
+    dorovnává po opětovném spojení.</p>
+</section>
+
+<section class="chapter">
+  <p class="kicker">{{t:chapter.word}} <span class="no"></span></p>
+  <h2><span class="no"></span> Otevřené body</h2>
+  <table>
+    <thead><tr><th>#</th><th>Otevřený bod</th><th>Vlastník</th><th>Termín</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Doplnit po dohodě s dodavatelem</td><td>—</td><td>—</td></tr>
+    </tbody>
+  </table>
+
+  <div class="endmark">
+    <div class="logo">{{logo}}</div>
+    <div class="line">{{project}} · {{version}} · {{marking}}</div>
+  </div>
+</section>

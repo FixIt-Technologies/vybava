@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": ".press.conf.json — press family per-project state (v1.0.0)",
+  "type": "object",
+  "required": ["project", "logo", "pdf", "design", "meta"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "= folder name under ~/Exports/" },
+        "type": { "type": "string", "description": "e.g. ai-platform, mobile-app, e-commerce" },
+        "description": { "type": "string", "description": "core concept: purpose + target audience" },
+        "git": { "type": "string", "description": "origin URL for quick code lookup" },
+        "dir": { "type": "string", "description": "where the project lives on this machine" }
+      }
+    },
+    "logo": {
+      "type": "object",
+      "description": "press-logo state: artifacts[] index + palette/mark facts, createdAt/updatedAt",
+      "properties": { "artifacts": { "$ref": "#/$defs/entries" } }
+    },
+    "pdf": {
+      "type": "object",
+      "description": "press-pdf state",
+      "properties": { "documents": { "$ref": "#/$defs/entries" } }
+    },
+    "design": {
+      "type": "object",
+      "properties": { "artifacts": { "$ref": "#/$defs/entries" } }
+    },
+    "ares": {
+      "type": "object",
+      "description": "IČO → cached ARES company info",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "ico": { "type": "string" }, "name": { "type": "string" },
+          "dic": { "type": "string" }, "legalForm": { "type": "string" },
+          "address": { "type": "string" }, "fetchedAt": { "type": "string" }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["skillVersion"],
+      "properties": {
+        "skillVersion": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    }
+  },
+  "$defs": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": { "enum": ["pdf", "logo", "design"] },
+          "type": { "type": "string", "description": "pdf: offer|documentation|legal" },
+          "file": { "type": "string", "description": "path relative to the project dir" },
+          "title": { "type": "string" },
+          "version": { "type": "string" },
+          "issuer": { "type": "string" },
+          "target": { "type": "string" },
+          "status": { "type": "string", "description": "draft|sent|signed|published|..." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  }
+}

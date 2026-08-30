@@ -1,0 +1,286 @@
+/* ──────────────────────────────────────────────────────────────────────
+   pdf-press — structural print stylesheet
+   MANAGED FILE. Scaffolded by the `pdf-press` skill; `/pdf-press upgrade`
+   re-syncs it. Contains NO brand values: every color, font, size, and page
+   geometry arrives as a custom property from the generated theme.css, which
+   build.py derives from .pdf-press.config.json. If you need a hex code here, it
+   belongs in the config instead.
+   @page and @font-face live in theme.css.
+   ────────────────────────────────────────────────────────────────────── */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
+body {
+  font-family: var(--font-body);
+  font-size: var(--size-body);
+  line-height: 1.5;
+  color: var(--body);
+  background: var(--paper);
+}
+
+/* ── cover ─────────────────────────────────────────────────────────────
+   Background treatment (hero-fill / panel / minimal) and the ::before
+   motif streaks come from theme.css. Layout is here. */
+.cover {
+  page: cover;
+  height: var(--cover-height);
+  padding: 24mm 22mm 18mm;
+  display: flex;
+  flex-direction: column;
+  page-break-after: always;
+  position: relative;
+  overflow: hidden;
+}
+.cover > * { position: relative; }
+.cover .cover-art { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.cover .cover-head { display: flex; justify-content: space-between; align-items: center; }
+.cover .logo svg { height: 10mm; width: auto; display: block; }
+.cover .brand {
+  font-family: var(--font-mono);
+  font-size: var(--size-coverBrand); letter-spacing: 0.24em;
+}
+.cover h1 {
+  font-family: var(--font-display);
+  font-size: var(--size-coverTitle); line-height: 1.06;
+  font-variation-settings: 'wght' 640; font-weight: 700;
+  letter-spacing: -0.018em;
+  margin-top: 56mm; max-width: 150mm;
+}
+.cover .subtitle {
+  margin-top: 7mm; font-size: var(--size-coverSubtitle);
+  max-width: 128mm; line-height: 1.5; opacity: 0.76;
+}
+.cover .meta {
+  margin-top: auto;
+  font-family: var(--font-mono);
+  font-size: var(--size-coverMeta); line-height: 1.9; opacity: 0.82;
+  border-top: 0.35mm solid currentColor; padding-top: 5mm;
+  display: flex; justify-content: space-between; align-items: flex-end;
+}
+/* No text-transform: the marking is a legal string and must render exactly as
+   authored in the config, identically on the cover and in the endmark. */
+.cover .meta .confidential {
+  text-align: right; letter-spacing: 0.1em;
+  font-variation-settings: 'wght' 700; font-weight: 700; opacity: 1;
+}
+
+/* edition tag — ::before motif glyph injected by theme.css */
+.edition-tag {
+  display: inline-flex; align-items: baseline; gap: 2.4mm;
+  margin-top: 12mm;
+  font-family: var(--font-mono); font-size: var(--size-editionTag);
+  letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2.6mm 6mm; border-radius: 10mm;
+  align-self: flex-start;
+}
+.edition-tag.ink    { background: var(--ink); color: var(--paper); }
+.edition-tag.ink::before    { color: var(--brand); }
+.edition-tag.paper  { background: var(--paper); color: var(--ink); border: 0.3mm solid var(--edge-strong, var(--edge)); }
+.edition-tag.paper::before  { color: var(--brand-ink, var(--ink)); }
+/* An unbordered brand pill vanishes on a hero-fill cover of the same colour,
+   leaving the tag text hanging 6mm inside the margin with nothing around it. */
+.edition-tag.brand  { background: var(--brand); color: var(--ink); border: 0.3mm solid var(--ink); }
+.edition-tag.brand::before  { color: var(--ink); }
+
+/* ── table of contents ─────────────────────────────────────────────── */
+.toc { page-break-after: always; }
+.toc h2 { margin-bottom: 8mm; }
+.toc ol { list-style: none; }
+.toc li {
+  display: flex; align-items: baseline; gap: 3mm;
+  padding: 1.9mm 0; border-bottom: 0.2mm dotted var(--edge);
+  font-size: var(--size-toc);
+}
+.toc li .no {
+  font-family: var(--font-mono); font-size: var(--size-tocNo);
+  color: var(--brand-ink, var(--dim)); min-width: 8mm;
+}
+.toc li.sub { padding-left: 11mm; font-size: var(--size-tocSub); color: var(--dim); }
+
+/* ── auto-numbering ────────────────────────────────────────────────────
+   Hand-typed chapter, section, and figure numbers drift the moment two
+   editions include different chapters — the supplier edition ends up with
+   "Fig. 2" as its first figure under a chapter numbered 2 with sections
+   numbered 3.1. Counters make numbering a function of what the edition
+   actually contains.
+
+   Opt-in and backward compatible: only an EMPTY .no / .fig-n is filled, so
+   existing content with literal numbers is left alone.
+     <h2><span class="no"></span> Title</h2>
+     <h3><span class="no"></span> Subtitle</h3>
+     <figcaption><span class="fig-no">{{t:fig.word}} <span class="fig-n"></span></span> — …
+   The figure word stays a {{t:…}} label because it is language-specific. */
+body { counter-reset: chapter figure tocitem; }
+section.chapter { counter-increment: chapter; counter-reset: section; }
+section.chapter h3 { counter-increment: section; }
+figure { counter-increment: figure; }
+.toc li { counter-increment: tocitem; }
+
+h2 .no:empty::before { content: counter(chapter); }
+.kicker .no:empty::before { content: counter(chapter); }
+h3 .no:empty::before { content: counter(chapter) "." counter(section); }
+.toc li .no:empty::before { content: counter(tocitem); }
+.fig-n:empty::before { content: counter(figure); }
+
+/* ── headings & structure ──────────────────────────────────────────── */
+section.chapter { page-break-before: always; }
+section.chapter.flow { page-break-before: auto; }
+
+h2 {
+  font-family: var(--font-display);
+  font-size: var(--size-h2); font-variation-settings: 'wght' 660; font-weight: 700;
+  letter-spacing: -0.012em; color: var(--ink);
+  margin: 0 0 5mm; padding-top: 1mm;
+  display: flex; align-items: baseline; gap: 4mm;
+  page-break-after: avoid;
+}
+/* A kicker is the heading's overline — it must never be the last thing on a page. */
+.kicker { page-break-after: avoid; }
+h2 .no {
+  font-family: var(--font-mono); font-size: var(--size-chapterNo); color: var(--ink);
+  letter-spacing: 0.06em;
+  background: var(--brand); padding: 0.6mm 2.2mm; border-radius: 1mm;
+  display: inline-block; vertical-align: middle; margin-right: 1.2mm;
+  transform: translateY(-8%);
+}
+h3 {
+  font-size: var(--size-h3); font-variation-settings: 'wght' 640; font-weight: 700;
+  color: var(--ink); margin: 6mm 0 2.4mm; page-break-after: avoid;
+}
+h4 {
+  font-size: var(--size-h4); font-variation-settings: 'wght' 640; font-weight: 700;
+  color: var(--ink); margin: 4mm 0 1.6mm; page-break-after: avoid;
+}
+p { margin: 0 0 2.8mm; }
+p, li { orphans: 3; widows: 3; }
+ul, ol { margin: 0 0 3mm 5.5mm; }
+li { margin-bottom: 1.2mm; page-break-inside: avoid; }
+strong { font-variation-settings: 'wght' 700; font-weight: 700; color: var(--ink); }
+em { font-style: italic; }
+a { color: var(--ink); text-decoration: underline; }
+
+.kicker {
+  font-family: var(--font-mono); font-size: var(--size-kicker);
+  letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint);
+  margin-bottom: 2mm;
+}
+.lead { font-size: var(--size-lead); color: var(--dim); line-height: 1.55; margin-bottom: 5mm; max-width: 165mm; }
+.small { font-size: var(--size-small); color: var(--dim); line-height: 1.5; }
+
+code, .mono {
+  font-family: var(--font-mono); font-size: 0.88em;
+  background: var(--panel); border: 0.2mm solid var(--edge);
+  border-radius: 0.8mm; padding: 0.2mm 1.2mm;
+  white-space: nowrap;
+}
+pre {
+  font-family: var(--font-mono); font-size: var(--size-pre); line-height: 1.5;
+  background: var(--panel); border: 0.25mm solid var(--edge);
+  border-left: 1mm solid var(--brand);
+  border-radius: 1mm; padding: 3mm 4mm; margin: 0 0 3.5mm;
+  white-space: pre-wrap; page-break-inside: avoid;
+}
+pre code { background: none; border: none; padding: 0; white-space: pre-wrap; font-size: inherit; }
+
+/* ── tables ────────────────────────────────────────────────────────── */
+table {
+  width: 100%; border-collapse: collapse; margin: 0 0 4mm;
+  font-size: var(--size-table); page-break-inside: avoid;
+}
+table.breakable { page-break-inside: auto; }
+/* A table that may break must repeat its header on every page it spans —
+   otherwise the continuation reads as an unlabelled block of values. */
+thead { display: table-header-group; }
+tfoot { display: table-footer-group; }
+th {
+  font-family: var(--font-mono); font-size: var(--size-tableHead);
+  letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim);
+  text-align: left; padding: 1.8mm 2.5mm;
+  border-bottom: 0.5mm solid var(--ink);
+  background: var(--panel);
+}
+td { padding: 1.7mm 2.5mm; border-bottom: 0.2mm solid var(--edge); vertical-align: top; }
+tr { page-break-inside: avoid; }
+td code { white-space: nowrap; }
+
+/* ── figures ───────────────────────────────────────────────────────── */
+figure {
+  margin: 4.5mm 0 5.5mm; page-break-inside: avoid;
+  border: 0.25mm solid var(--edge); border-radius: 2mm;
+  padding: 4mm 4mm 2.5mm; background: var(--panel);
+}
+figure svg { width: 100%; height: auto; display: block; }
+svg text { font-family: var(--font-mono); }
+figcaption {
+  font-family: var(--font-mono); font-size: var(--size-figcaption);
+  color: var(--dim); margin-top: 2.5mm; padding-top: 2mm;
+  border-top: 0.2mm dotted var(--edge);
+  page-break-before: avoid;  /* never orphan a caption from its figure */
+}
+figcaption .fig-no { color: var(--brand-ink, var(--dim)); font-size: var(--size-figNo); }
+
+/* ── callouts ──────────────────────────────────────────────────────── */
+.callout {
+  border: 0.25mm solid var(--edge); border-left: 1.2mm solid var(--brand);
+  background: var(--brand-wash, var(--panel)); border-radius: 1.2mm;
+  padding: 2.8mm 4mm; margin: 0 0 3.5mm; font-size: var(--size-callout);
+  page-break-inside: avoid;
+}
+.callout .callout-title {
+  font-family: var(--font-mono); font-size: var(--size-calloutTitle);
+  letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 1mm;
+  color: var(--brand-ink, var(--dim));
+}
+.callout.warn  { border-left-color: var(--pv, var(--dim));    background: var(--pv-wash, var(--panel)); }
+.callout.warn .callout-title  { color: var(--pv, var(--dim)); }
+.callout.alarm { border-left-color: var(--alarm, var(--ink)); background: var(--alarm-wash, var(--panel)); }
+.callout.alarm .callout-title { color: var(--alarm, var(--ink)); }
+
+/* ── status badges — the honesty layer ──────────────────────────────────
+   Any block making a normative claim carries data-status; lint.py enforces
+   it. The badge renders that state on paper so a reader (and a supplier)
+   can never mistake PLANNED for as-built. */
+[data-status] { position: relative; }
+[data-status]::after {
+  content: attr(data-status);
+  font-family: var(--font-mono); font-size: var(--size-status);
+  letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 0.4mm 1.6mm; border-radius: 0.8mm; margin-left: 2mm;
+  vertical-align: 0.08em; white-space: nowrap;
+  border: 0.2mm solid currentColor;
+}
+[data-status="IMPLEMENTED"]::after { color: var(--bat, var(--dim)); background: var(--bat-wash, var(--panel)); }
+[data-status="PLANNED"]::after     { color: var(--pv, var(--dim)); background: var(--pv-wash, var(--panel)); }
+[data-status="PROPOSED"]::after    { color: var(--dim); background: var(--panel); }
+figure[data-status]::after, table[data-status]::after, section[data-status]::after { display: none; }
+
+.status-note {
+  font-family: var(--font-mono); font-size: var(--size-statusNote); color: var(--faint);
+  margin: -1.6mm 0 3mm;
+}
+
+/* ── legend chips (signal semantics — meaning, not decoration) ─────── */
+.chips { display: flex; flex-wrap: wrap; gap: 2mm; margin: 0 0 3.5mm; }
+.chip {
+  font-family: var(--font-mono); font-size: var(--size-chip);
+  padding: 1mm 2.6mm; border-radius: 6mm; border: 0.25mm solid;
+}
+
+/* ── endmark ───────────────────────────────────────────────────────── */
+.endmark {
+  margin-top: 14mm; padding-top: 5mm;
+  border-top: 0.6mm solid var(--brand);
+  display: flex; align-items: center; justify-content: space-between;
+  page-break-inside: avoid;
+}
+.endmark .logo svg { height: 6.5mm; width: auto; display: block; }
+.endmark .line {
+  font-family: var(--font-mono); font-size: var(--size-endmark);
+  letter-spacing: 0.14em; color: var(--faint);
+}
+
+/* ── helpers ───────────────────────────────────────────────────────── */
+.cols2 { display: grid; grid-template-columns: 1fr 1fr; gap: 5mm; }
+.avoid-break { page-break-inside: avoid; }

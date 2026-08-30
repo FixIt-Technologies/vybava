@@ -1,0 +1,50 @@
+{
+  "chapter.word": {
+    "en": "Chapter",
+    "cs": "Kapitola"
+  },
+  "fig.word": {
+    "en": "Fig.",
+    "cs": "Obr."
+  },
+  "fig1.actor": {
+    "en": "Operator",
+    "cs": "Operátor"
+  },
+  "fig1.actor.sub": {
+    "en": "web client",
+    "cs": "webový klient"
+  },
+  "fig1.edge.in": {
+    "en": "requests",
+    "cs": "požadavky"
+  },
+  "fig1.edge.out": {
+    "en": "events",
+    "cs": "události"
+  },
+  "fig1.external": {
+    "en": "External counterparty",
+    "cs": "Externí protistrana"
+  },
+  "fig1.external.sub": {
+    "en": "supplier system",
+    "cs": "systém dodavatele"
+  },
+  "fig1.mod1": {
+    "en": "API surface",
+    "cs": "API rozhraní"
+  },
+  "fig1.mod2": {
+    "en": "Domain services",
+    "cs": "Doménové služby"
+  },
+  "fig1.mod3": {
+    "en": "Persistence",
+    "cs": "Persistentní vrstva"
+  },
+  "fig1.system": {
+    "en": "System under description",
+    "cs": "Popisovaný systém"
+  }
+}

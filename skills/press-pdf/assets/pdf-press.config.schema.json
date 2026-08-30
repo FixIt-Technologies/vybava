@@ -1,0 +1,660 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vybava.fixit.technology/schemas/pdf-press-1.json",
+  "title": "pdf-press project configuration",
+  "description": "Per-project configuration for the pdf-press enterprise architecture PDF pipeline. Lives at docs/architecture/.pdf-press.config.json. Every visual and structural decision is a token here; nothing is hardcoded in the pipeline.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "pipelineVersion",
+    "project",
+    "version",
+    "languages",
+    "editions",
+    "theme"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1,
+      "description": "Config contract version. Bumped only on a breaking key change."
+    },
+    "pipelineVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Version of assets/pipeline/ this project was scaffolded from. The skill compares it to its own PIPELINE_VERSION and offers an upgrade when behind."
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "name",
+        "title"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Short slug used in output filenames, e.g. \"acme\"."
+        },
+        "title": {
+          "$ref": "#/$defs/i18nString",
+          "description": "Document title on the cover, per language."
+        },
+        "subtitle": {
+          "$ref": "#/$defs/i18nString"
+        },
+        "author": {
+          "type": "string",
+          "description": "PDF /Author metadata."
+        },
+        "subject": {
+          "$ref": "#/$defs/i18nString",
+          "description": "PDF /Subject metadata."
+        }
+      }
+    },
+    "version": {
+      "type": "object",
+      "required": [
+        "policy"
+      ],
+      "additionalProperties": false,
+      "description": "Document version shown on the cover and in the footer stamp.",
+      "properties": {
+        "policy": {
+          "enum": [
+            "config",
+            "date"
+          ],
+          "description": "\"config\" (recommended) uses `value` verbatim — builds are byte-reproducible. \"date\" derives vYYYY.MM at build time and BREAKS reproducibility across months."
+        },
+        "value": {
+          "type": "string",
+          "description": "Required when policy is \"config\", e.g. \"v2026.07\"."
+        },
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "Fixed date used for PDF /CreationDate and /ModDate. Required when policy is \"config\" — a wall-clock timestamp would make every rebuild a different file."
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "default": ".",
+          "description": "Output directory, relative to the config file (docs/architecture/). \".\" keeps PDFs beside the document set; \"..\" writes them one level above it, where nobody looks. For an issued document set, point this at a dated folder such as \"releases/2026-07-27\" and bump it when cutting the next release."
+        },
+        "pattern": {
+          "type": "string",
+          "default": "{project}-architecture-{edition}-{lang}.pdf",
+          "description": "Filename template. Placeholders: {project} {edition} {lang} {version}."
+        }
+      }
+    },
+    "languages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z]{2}$"
+      },
+      "description": "Language codes. Every i18n string and every figure label must cover all of them — lint fails otherwise."
+    },
+    "editions": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "One entry per audience. Keys become the {edition} filename token.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "label",
+          "marking",
+          "footerLeft",
+          "figures"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "$ref": "#/$defs/i18nString",
+            "description": "Cover edition tag, e.g. \"partner edition\"."
+          },
+          "title": {
+            "$ref": "#/$defs/i18nString",
+            "description": "Optional per-edition document title, overriding project.title — for an edition that is a different document (e.g. a supplier communication spec) sharing the project's pipeline and identity."
+          },
+          "subtitle": {
+            "$ref": "#/$defs/i18nString",
+            "description": "Optional per-edition subtitle, overriding project.subtitle. Only consulted when the edition also overrides title."
+          },
+          "marking": {
+            "$ref": "#/$defs/i18nString",
+            "description": "Confidentiality marking on the cover and in the footer, e.g. \"Confidential — for partner use\"."
+          },
+          "footerLeft": {
+            "$ref": "#/$defs/i18nString",
+            "description": "Left-hand footer line on every page after the cover."
+          },
+          "tagStyle": {
+            "enum": [
+              "ink",
+              "paper",
+              "brand"
+            ],
+            "default": "ink",
+            "description": "Cover edition-tag treatment."
+          },
+          "figures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Figure slugs this edition may embed. Lint fails on any {{fig:…}} in the edition's content that is not listed here — this is the scope gate that stops internal figures leaking into an external document."
+          },
+          "scopeNote": {
+            "type": "string",
+            "description": "Human note on what this edition deliberately omits. Not rendered; read by the skill when authoring."
+          },
+          "content": {
+            "type": "object",
+            "required": [
+              "from"
+            ],
+            "additionalProperties": false,
+            "description": "Derive this edition's content from another edition's file at build time instead of authoring a twin that drifts. One tagged master, N audience renderings.",
+            "properties": {
+              "from": {
+                "type": "string",
+                "description": "Edition whose content file is the source (e.g. \"internal-spec\")."
+              },
+              "stripStatus": {
+                "type": "boolean",
+                "default": false,
+                "description": "Strip data-status/data-source attributes from the derived body — the audience sees clean normative prose while the master stays lint-truthful."
+              },
+              "dropClasses": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Top-level <section> elements carrying any of these classes are removed from the derived body (e.g. [\"internal-only\"]). Sections only, no nesting — an inline internal-only fragment belongs in its own section."
+              }
+            }
+          },
+          "deprecated": {
+            "type": "boolean",
+            "default": false,
+            "description": "Mark this edition as superseded: its PDF is written as <name>.deprecated.pdf and its metadata carries [DEPRECATED]. Use when an edition still builds (so it stays reproducible) but must not be mistaken for the current deliverable. Renaming the file by hand does not work — the next build restores the pattern name."
+          }
+        }
+      }
+    },
+    "theme": {
+      "type": "object",
+      "required": [
+        "colors",
+        "fonts"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "page": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size": {
+              "enum": [
+                "A4",
+                "LETTER"
+              ],
+              "default": "A4"
+            },
+            "margin": {
+              "type": "string",
+              "default": "17mm 16mm 21mm 16mm",
+              "description": "CSS @page margin shorthand."
+            }
+          }
+        },
+        "contentWidth": {
+          "type": "integer",
+          "default": 760,
+          "description": "Figure viewBox width equal to the printable content width. Every figure must use exactly this — that is what makes stroke weights and label sizes consistent across figures."
+        },
+        "colors": {
+          "type": "object",
+          "description": "Structural palette. Every key becomes a CSS custom property (paper -> --paper).",
+          "required": [
+            "paper",
+            "panel",
+            "ink",
+            "body",
+            "dim",
+            "faint",
+            "edge",
+            "brand"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/hexColor"
+          }
+        },
+        "signals": {
+          "type": "object",
+          "description": "Semantic figure palette: name -> [stroke, wash]. These colors carry MEANING in figures (pv=amber, battery=green …), never decoration. The figure linter allows only these plus the structural palette.",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {
+              "$ref": "#/$defs/hexColor"
+            }
+          }
+        },
+        "fonts": {
+          "type": "object",
+          "required": [
+            "body",
+            "mono"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "$ref": "#/$defs/fontRole"
+            },
+            "display": {
+              "$ref": "#/$defs/fontRole"
+            },
+            "mono": {
+              "$ref": "#/$defs/fontRole"
+            }
+          }
+        },
+        "scale": {
+          "type": "object",
+          "description": "Type scale in pt. Omitted keys fall back to the pipeline defaults.",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "cover": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "style": {
+              "enum": [
+                "hero-fill",
+                "panel",
+                "minimal"
+              ],
+              "default": "panel",
+              "description": "hero-fill = full-bleed brand cover with motif streaks; panel = paper cover with a brand rule; minimal = type only."
+            },
+            "motif": {
+              "type": "string",
+              "default": "",
+              "description": "Short brand glyph run used as a kicker prefix and on the edition tag, e.g. \"///\". Empty disables it."
+            },
+            "heightMm": {
+              "type": "number",
+              "description": "Cover height. Defaults to one millimetre under the resolved page height so the cover never spills a blank second page; a value that does not fit the page size is clamped with a warning."
+            },
+            "background": {
+              "$ref": "#/$defs/hexColor",
+              "description": "Cover background for hero-fill. Defaults to brand. Set this when the brand accent colour is not the right full-bleed field (e.g. a dark navy cover with a teal accent used elsewhere)."
+            },
+            "ink": {
+              "$ref": "#/$defs/hexColor",
+              "description": "Cover text colour. Defaults to ink. Required for a dark cover.background, where the body ink would be unreadable."
+            }
+          }
+        },
+        "logo": {
+          "type": "string",
+          "description": "Path to an SVG logo, relative to the config file. Inlined on the cover and in the endmark. Omit for a type-only document."
+        },
+        "footer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Post-render footer stamp (page numbers + edition line), drawn with reportlab.",
+          "properties": {
+            "fontFile": {
+              "type": "string",
+              "description": "TTF path relative to the config file. Falls back to Helvetica when absent — set it, or Czech diacritics may render wrong."
+            },
+            "sizePt": {
+              "type": "number",
+              "default": 6.4
+            },
+            "color": {
+              "description": "Stamp colour. Prefer a theme.colors KEY (e.g. \"dim\") so it stays inside the palette the linter checks; a raw [r,g,b] triple is accepted but warned about.",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "array",
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "items": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
+              ],
+              "default": "dim"
+            },
+            "sideMarginMm": {
+              "type": "number",
+              "default": 16
+            },
+            "baselineMm": {
+              "type": "number",
+              "default": 11
+            },
+            "pageWord": {
+              "$ref": "#/$defs/i18nString",
+              "description": "The word before \"3 / 18\", per language. Defaults to \"page\" for en and the language code otherwise — set it for every language you ship."
+            }
+          }
+        }
+      }
+    },
+    "figures": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "default": "figures"
+        },
+        "labels": {
+          "type": "string",
+          "default": "figures/labels.json"
+        },
+        "lint": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Mechanical enforcement of the figure conventions. This is what keeps a hand-drawn SVG set looking like one system.",
+          "properties": {
+            "enforceViewBoxWidth": {
+              "type": "boolean",
+              "default": true
+            },
+            "rx": {
+              "type": "number",
+              "default": 4,
+              "description": "Required corner radius on box rects."
+            },
+            "strokeWidth": {
+              "type": "number",
+              "default": 1.2
+            },
+            "fontSizes": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "default": [
+                11,
+                9.5,
+                8
+              ],
+              "description": "The only permitted svg text font-size values: group title / body label / annotation."
+            },
+            "allowExtraColors": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/hexColor"
+              },
+              "default": [],
+              "description": "Escape hatch for a color that is genuinely outside the palette. Every entry needs a reason in the commit message."
+            },
+            "minRenderedPt": {
+              "type": "number",
+              "default": 5.0,
+              "description": "Readable floor for figure text ON PAPER. A figure is scaled to the text column, so an authored size of 8 at contentWidth 760 lands at ~5.07pt on A4 — enforcing the authored value alone misses this. 5.0 suits the annotation tier; raise to 6.0 when the document has an accessibility requirement or will be printed below A4."
+            }
+          }
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "default": "build/content",
+          "description": "Holds <edition>.<lang>.html fragments."
+        },
+        "doctrine": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Content rules the linter enforces so the document stays contractually honest.",
+          "properties": {
+            "statusTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [
+                "IMPLEMENTED",
+                "PLANNED",
+                "PROPOSED"
+              ],
+              "description": "Allowed values of data-status on a normative block."
+            },
+            "requireStatusOnNormative": {
+              "type": "boolean",
+              "default": true,
+              "description": "A block containing a normative marker (must/shall/musí) must carry data-status. Stops the document promising behavior the system does not have."
+            },
+            "normativeMarkers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description": "Per-language words that make a sentence normative."
+            },
+            "requireSourceOnStatus": {
+              "type": "boolean",
+              "default": true,
+              "description": "An IMPLEMENTED block must also carry data-source with a repo path (file or file:line). Facts get receipts."
+            },
+            "statusLabels": {
+              "type": "object",
+              "description": "Per-status printed wording, per language: {\"IMPLEMENTED\": {\"cs\": \"IMPLEMENTOVÁNO\", \"en\": \"IMPLEMENTED\"}}. The badge is drawn by CSS from data-status, so an untranslated document stamps every normative Czech sentence with an English word.",
+              "additionalProperties": {
+                "$ref": "#/$defs/i18nString"
+              }
+            }
+          }
+        },
+        "typography": {
+          "type": "object",
+          "description": "Micro-typography applied to text nodes at build time, per language. Omit for sane defaults (Czech/Slovak get the full ČSN 01 6910 set). Set a language to [] to disable.",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "prepositions",
+                "units",
+                "operators",
+                "dashes",
+                "references",
+                "beforeCode"
+              ]
+            },
+            "description": "prepositions = one-letter preposition may not end a line · units = bind a number to its unit · operators = bind < ≤ ≥ to the number · dashes = an em dash may not start a line · references = kap./§/obr. bind to the number · beforeCode = a short word may not be stranded before an inline identifier"
+          }
+        },
+        "glossary": {
+          "type": "array",
+          "description": "Terminology policy checked by lint: foreign technical terms whose treatment in this document must be consistent.",
+          "items": {
+            "type": "object",
+            "required": [
+              "term"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "term": {
+                "type": "string",
+                "description": "The term as it appears in prose (case-insensitive, word-boundary)."
+              },
+              "prefer": {
+                "type": "string",
+                "description": "What to write instead. Omit to allow the term but still count its uses."
+              },
+              "note": {
+                "type": "string",
+                "description": "Why — shown in the lint message."
+              },
+              "allow": {
+                "type": "boolean",
+                "default": false,
+                "description": "true = an accepted loanword; lint stays silent but the term stays inventoried."
+              },
+              "langs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Languages this rule applies to (e.g. [\"cs\"]). Omit to apply to every language."
+              }
+            }
+          }
+        },
+        "pagination": {
+          "type": "object",
+          "description": "Per-project pagination thresholds for pagecheck.py; each key overrides that check's default.",
+          "additionalProperties": false,
+          "properties": {
+            "minFillRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.25,
+              "description": "A page filled less than this is reported as suspiciously empty."
+            },
+            "minLastPageFill": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.08,
+              "description": "The final page may be short, but not a single stray line."
+            },
+            "maxLinesAfterHeading": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 1,
+              "description": "A heading with no more than this many lines beneath it is stranded at a page foot."
+            },
+            "marginTolerancePt": {
+              "type": "number",
+              "minimum": 0,
+              "default": 1.5,
+              "description": "Slack in points before a margin overrun counts as a violation."
+            },
+            "widowGapFactor": {
+              "type": "number",
+              "minimum": 0,
+              "default": 1.8,
+              "description": "Gap divided by median leading above which a page's top line reads as a widow."
+            }
+          }
+        }
+      }
+    },
+    "chrome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "Chrome/Chromium binary. Autodetected when null; ARCH_SPEC_CHROME overrides both."
+        },
+        "virtualTimeBudgetMs": {
+          "type": "integer",
+          "default": 10000,
+          "description": "Raise if large figures or webfonts are not fully laid out at capture."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "i18nString": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Language code -> string. Must cover every entry in `languages`."
+    },
+    "hexColor": {
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}$"
+    },
+    "fontRole": {
+      "type": "object",
+      "required": [
+        "family"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "family": {
+          "type": "string"
+        },
+        "stack": {
+          "type": "string",
+          "description": "CSS fallback appended after family, e.g. \"sans-serif\"."
+        },
+        "faces": {
+          "type": "array",
+          "description": "@font-face sources. Empty means the family is expected to be installed or is a generic stack.",
+          "items": {
+            "type": "object",
+            "required": [
+              "src"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "src": {
+                "type": "string",
+                "description": "Path relative to the config file."
+              },
+              "format": {
+                "type": "string",
+                "default": "woff2"
+              },
+              "weight": {
+                "type": "string",
+                "default": "400"
+              },
+              "style": {
+                "type": "string",
+                "default": "normal"
+              },
+              "unicodeRange": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
