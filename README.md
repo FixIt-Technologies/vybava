@@ -12,6 +12,7 @@ every item installs independently.
 | `shrt` | applet | Terminal-safe short links on luko.to — offline repo rules, team-shared dynamic rules, minted codes; also the redirector server. → [docs/shrt.md](docs/shrt.md) |
 | `fontfreeze` | applet | Freeze variable webfonts at rendered axis positions and subset per language. |
 | `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |
+| `ingressgen` | applet | Render and drift-check complete default-deny Docker ingress policies from a manifest. |
 | `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
 | `press` | applet | Deterministic state for the document family — project resolution, `~/Exports/<project>/` config and index, ARES lookups, shared doctrine. → [docs/press.md](docs/press.md) |
 | `press-pdf` / `press-logo` / `press-offer` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
