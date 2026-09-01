@@ -401,6 +401,11 @@ func (s *Server) handleRedirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if long, ok := ExpandStatic(path); ok {
+		// The generic gh/ form may carry the original query on the short
+		// URL — it belongs to the target.
+		if q := r.URL.RawQuery; q != "" {
+			long += "?" + q
+		}
 		http.Redirect(w, r, long, http.StatusFound)
 		return
 	}
