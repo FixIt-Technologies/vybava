@@ -59,7 +59,7 @@ var (
 	// ride the short URL (the server re-appends it) and the fragment carries
 	// itself across the redirect (browsers preserve it when the Location has
 	// none).
-	githubAny = regexp.MustCompile(`^https://github\.com/([^?#]+)((?:\?[^#]*)?(?:#.*)?)$`)
+	githubAny  = regexp.MustCompile(`^https://github\.com/([^?#]+)((?:\?[^#]*)?(?:#.*)?)$`)
 	boardShort = regexp.MustCompile(`^https://(?:app\.)?vitrinka\.ai/b/(\d+)/?$`)
 	ghPath     = regexp.MustCompile(`^gh/([a-z0-9-]+)(?:/(\d+))?$`)
 	bPath      = regexp.MustCompile(`^b/(\d+)$`)
