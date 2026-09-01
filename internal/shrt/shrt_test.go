@@ -21,6 +21,12 @@ func TestStaticRoundTrip(t *testing.T) {
 		{"https://github.com/genesiscz/ReservineBack/pull/645", "gh/resback/645"},
 		{"https://vitrinka.ai/b/581", "b/581"},
 		{"https://app.vitrinka.ai/b/581", "b/581"},
+		{"https://github.com/FixIt-Technologies/vitrinka-kit/pull/13", "gh/kit/13"},
+		// The generic catch-all: anything github.com serves keeps the full
+		// path under the compact gh/ prefix, query riding along.
+		{"https://github.com/FixIt-Technologies/vitrinka/actions/runs/33399524360", "gh/FixIt-Technologies/vitrinka/actions/runs/33399524360"},
+		{"https://github.com/torvalds/linux/tree/master/kernel", "gh/torvalds/linux/tree/master/kernel"},
+		{"https://github.com/search?q=shrt&type=code", "gh/search?q=shrt&type=code"},
 	}
 	for _, c := range cases {
 		if got := ShortenStatic(c.long); got != c.short {
@@ -40,15 +46,23 @@ func TestStaticRoundTrip(t *testing.T) {
 	}
 }
 
-func TestShortenStaticUnknownRepoFallsThrough(t *testing.T) {
-	if got := ShortenStatic("https://github.com/torvalds/linux/pull/1"); got != "" {
-		t.Errorf("unknown repo should not shorten statically, got %q", got)
+func TestShortenStaticUnknownRepoUsesGenericGh(t *testing.T) {
+	// An unaliased repo's PR keeps its full path under gh/ — compact prefix,
+	// no alias table growth, still fully offline.
+	if got := ShortenStatic("https://github.com/torvalds/linux/pull/1"); got != "gh/torvalds/linux/pull/1" {
+		t.Errorf("unknown repo should shorten generically, got %q", got)
 	}
 }
 
-func TestExpandStaticUnknownAlias(t *testing.T) {
-	if _, ok := ExpandStatic("gh/nonexistent/1"); ok {
-		t.Error("unknown alias must not expand")
+func TestExpandStaticUnknownAliasFallsToGeneric(t *testing.T) {
+	// gh/<not-an-alias>/… expands verbatim onto github.com — a real path
+	// resolves, a typo'd alias lands on GitHub's own 404, still loud.
+	long, ok := ExpandStatic("gh/nonexistent/1")
+	if !ok || long != "https://github.com/nonexistent/1" {
+		t.Errorf("unknown alias should expand generically, got %q ok=%v", long, ok)
+	}
+	if _, ok := ExpandStatic("gh/"); ok {
+		t.Error("a bare gh/ must not expand")
 	}
 }
 

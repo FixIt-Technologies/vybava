@@ -15,8 +15,8 @@ import (
 const DefaultBase = "https://luko.to"
 
 // repoAliases maps the short gh namespace segment to owner/repo. Adding a
-// repo is one line; unknown aliases 404 loudly on the server and are never
-// emitted by the CLI.
+// repo is one line; an unknown gh/ segment expands verbatim onto github.com
+// (the generic catch-all below), so a typo'd alias lands on GitHub's 404.
 var repoAliases = map[string]string{
 	"fixit":     "FixIt-Technologies/FixIt",
 	"vitrinka":  "FixIt-Technologies/vitrinka",
@@ -29,6 +29,7 @@ var repoAliases = map[string]string{
 	"resback":   "Reservine/ReservineBack",
 	"exports":   "LEFTEQ/Exports",
 	"claudik":   "LEFTEQ/Claudik",
+	"kit":       "FixIt-Technologies/vitrinka-kit",
 }
 
 // aliasByRepo is the inverted table, built once at init.
@@ -52,6 +53,13 @@ var reservedSegments = map[string]bool{
 var (
 	githubItem = regexp.MustCompile(`^https://github\.com/([^/]+)/([^/]+)/(?:pull|issues)/(\d+)(?:[/#?].*)?$`)
 	githubRepo = regexp.MustCompile(`^https://github\.com/([^/]+)/([^/]+)/?$`)
+	// githubAny is the catch-all for every other github.com URL: no alias, no
+	// item shape — still worth the compact gh/ prefix with the path kept
+	// verbatim. Query and fragment are captured separately so the query can
+	// ride the short URL (the server re-appends it) and the fragment carries
+	// itself across the redirect (browsers preserve it when the Location has
+	// none).
+	githubAny  = regexp.MustCompile(`^https://github\.com/([^?#]+)((?:\?[^#]*)?(?:#.*)?)$`)
 	boardShort = regexp.MustCompile(`^https://(?:app\.)?vitrinka\.ai/b/(\d+)/?$`)
 	ghPath     = regexp.MustCompile(`^gh/([a-z0-9-]+)(?:/(\d+))?$`)
 	bPath      = regexp.MustCompile(`^b/(\d+)$`)
@@ -73,6 +81,9 @@ func ShortenStatic(long string) string {
 	if m := boardShort.FindStringSubmatch(long); m != nil {
 		return "b/" + m[1]
 	}
+	if m := githubAny.FindStringSubmatch(long); m != nil {
+		return "gh/" + m[1] + m[2]
+	}
 	return ""
 }
 
@@ -80,16 +91,23 @@ func ShortenStatic(long string) string {
 // long URL. ok is false when the path matches no rule or an unknown alias.
 func ExpandStatic(path string) (long string, ok bool) {
 	if m := ghPath.FindStringSubmatch(path); m != nil {
-		repo, known := repoAliases[m[1]]
-		if !known {
-			return "", false
+		if repo, known := repoAliases[m[1]]; known {
+			if m[2] == "" {
+				return "https://github.com/" + repo, true
+			}
+			// GitHub redirects /pull/N to /issues/N when N is an issue, so
+			// one form covers both.
+			return "https://github.com/" + repo + "/pull/" + m[2], true
 		}
-		if m[2] == "" {
-			return "https://github.com/" + repo, true
-		}
-		// GitHub redirects /pull/N to /issues/N when N is an issue, so one
-		// form covers both.
-		return "https://github.com/" + repo + "/pull/" + m[2], true
+		// Unknown alias falls through to the generic gh/ path below — the
+		// tail is a real github.com path, not a typo'd alias, more often
+		// than not; a genuine typo lands on GitHub's own 404, still loud.
+	}
+	if tail, ok := strings.CutPrefix(path, "gh/"); ok && tail != "" {
+		// The generic catch-all: gh/<anything github.com serves>. Alias
+		// forms above win for their exact shapes; everything else expands
+		// verbatim.
+		return "https://github.com/" + tail, true
 	}
 	if m := bPath.FindStringSubmatch(path); m != nil {
 		return "https://vitrinka.ai/b/" + m[1], true
