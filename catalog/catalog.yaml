@@ -55,6 +55,12 @@ items:
     description: Merge a pull request only after its safety, review, and CI gates pass.
     source: skills/merge
 
+  - id: cli-craft
+    kind: skill
+    status: experimental
+    description: Doctrine for building AI-first CLI tools and their thin-wrapper skills — envelope contract, closed diagnostics, Go/Charm patterns.
+    source: skills/cli-craft
+
   - id: press-pdf
     kind: skill
     status: experimental
@@ -93,6 +99,7 @@ groups:
       - press-logo
       - press-offer
       - ingressgen
+      - cli-craft
 
   - id: press-family
     description: Document production — the press CLI plus the PDF, logo, and offer skills that drive it.
@@ -124,3 +131,4 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - cli-craft
