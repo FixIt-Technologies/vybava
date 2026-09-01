@@ -92,6 +92,7 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - cli-craft
 
   - id: press-family
     description: Document production — the press CLI plus the PDF, logo, and offer skills that drive it.
@@ -122,3 +123,4 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - cli-craft

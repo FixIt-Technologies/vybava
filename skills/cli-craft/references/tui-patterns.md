@@ -42,8 +42,10 @@ Elm architecture is the only primitive: `tea.Model` holds all state,
 - Subprocess needing the terminal: tea.Exec, never hand-rolled
   ReleaseTerminal/RestoreTerminal.
 - Recovery from quit/crash = re-running the same command: step index +
-  collected state serialize to a state file; on start, skip completed
-  steps and offer resume. Checkpoint AFTER a step validates.
+  collected NON-SECRET state serialize to a 0600 state file; on start,
+  skip completed steps and offer resume. Checkpoint AFTER a step
+  validates. Secrets (passwords, tokens, keys) are never persisted — a
+  resumed flow re-prompts for them.
 
 ## Testing & ecosystem
 

@@ -48,7 +48,9 @@ func Finish(err error, stderr func(format string, a ...any)) int
 - Streaming verbs emit their envelope themselves and mark it emitted;
   `Finish` then stays silent.
 - Keep an `INFRA_ERROR` catch-all for unstructured failures (transport,
-  unexpected I/O) — detail carries the raw error, exit 1.
+  unexpected I/O) — detail carries the error message, exit 1. Sanitize
+  before emit: never credential-bearing URLs, tokens, headers, connection
+  strings, or env values in any envelope field.
 - Wrap with `%w` so `Finish` can unwrap to the DiagError.
 - Verbs are idempotent: re-running the same command after a crash IS the
   recovery path (devbox: digest-gated reconcile); long operations
