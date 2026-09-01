@@ -49,6 +49,12 @@ items:
     description: Merge a pull request only after its safety, review, and CI gates pass.
     source: skills/merge
 
+  - id: cli-craft
+    kind: skill
+    status: experimental
+    description: Doctrine for building AI-first CLI tools and their thin-wrapper skills — envelope contract, closed diagnostics, Go/Charm patterns.
+    source: skills/cli-craft
+
   - id: press-pdf
     kind: skill
     status: experimental
