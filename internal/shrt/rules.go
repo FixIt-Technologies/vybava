@@ -15,8 +15,8 @@ import (
 const DefaultBase = "https://luko.to"
 
 // repoAliases maps the short gh namespace segment to owner/repo. Adding a
-// repo is one line; unknown aliases 404 loudly on the server and are never
-// emitted by the CLI.
+// repo is one line; an unknown gh/ segment expands verbatim onto github.com
+// (the generic catch-all below), so a typo'd alias lands on GitHub's 404.
 var repoAliases = map[string]string{
 	"fixit":     "FixIt-Technologies/FixIt",
 	"vitrinka":  "FixIt-Technologies/vitrinka",
