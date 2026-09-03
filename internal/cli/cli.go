@@ -12,6 +12,7 @@ import (
 
 	assets "github.com/FixIt-Technologies/vybava"
 	"github.com/FixIt-Technologies/vybava/internal/catalog"
+	"github.com/FixIt-Technologies/vybava/internal/codexsync"
 	"github.com/FixIt-Technologies/vybava/internal/doctor"
 	"github.com/FixIt-Technologies/vybava/internal/fontfreeze"
 	"github.com/FixIt-Technologies/vybava/internal/ingressgen"
@@ -89,6 +90,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "hotfix" {
 		return rt.hotfixApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "codexsync" {
+		return rt.codexsyncApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -113,6 +117,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.pressCommand("press"),
 		rt.ingressgenCommand("ingressgen"),
 		rt.hotfixCommand("hotfix"),
+		rt.codexsyncCommand("codexsync"),
 		rt.browseCommand(),
 	)
 	return root, nil
@@ -922,4 +927,157 @@ func SortedItemIDs(c catalog.Catalog) []string {
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func (rt *runtime) codexsyncApplet() *cobra.Command {
+	command := rt.codexsyncCommand("codexsync")
+	command.SilenceUsage = true
+	command.SilenceErrors = true
+	command.SetOut(rt.stdout)
+	command.SetErr(rt.stderr)
+	command.PersistentFlags().BoolVar(&rt.json, "json", false, "emit stable JSON output")
+	return command
+}
+
+// codexsyncConfig resolves the four homes, letting each be overridden so a
+// test or a second machine profile can render somewhere else entirely.
+func codexsyncConfig(claudeHome, agentsHome, codexHome, backupRoot string) (codexsync.Config, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return codexsync.Config{}, err
+	}
+	pick := func(override, fallback string) string {
+		if override != "" {
+			return override
+		}
+		return filepath.Join(home, fallback)
+	}
+	return codexsync.Config{
+		ClaudeHome: pick(claudeHome, ".claude"),
+		AgentsHome: pick(agentsHome, ".agents"),
+		CodexHome:  pick(codexHome, ".codex"),
+		BackupRoot: pick(backupRoot, "Backups"),
+	}, nil
+}
+
+func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
+	command := &cobra.Command{
+		Use:   use,
+		Short: "Render Claude skills and commands into the structure Codex discovers",
+		Long: "Codex has no commands, and its only extension surface is a skill directory\n" +
+			"holding SKILL.md. codexsync renders ~/.claude/skills and ~/.claude/commands\n" +
+			"into ~/.agents/skills — Codex's documented user scope — deterministically:\n" +
+			"skills keep their nesting, each command becomes a source-command-<slug> skill,\n" +
+			"and a disable-model-invocation opt-out crosses over as the Codex policy\n" +
+			"sidecar. It also owns the [[skills.config]] block that suppresses duplicate\n" +
+			"discovery, and prunes prompt entries Codex cannot read. Displaced files are\n" +
+			"copied under ~/Backups/codexsync/ first.",
+	}
+	var claudeHome, agentsHome, codexHome, backupRoot string
+	var dryRun bool
+
+	command.PersistentFlags().StringVar(&claudeHome, "claude-home", "", "source Claude home (default ~/.claude)")
+	command.PersistentFlags().StringVar(&agentsHome, "agents-home", "", "destination agents home (default ~/.agents)")
+	command.PersistentFlags().StringVar(&codexHome, "codex-home", "", "Codex home holding config.toml (default ~/.codex)")
+	command.PersistentFlags().StringVar(&backupRoot, "backup-root", "", "where displaced files are copied (default ~/Backups)")
+
+	type planResult struct {
+		Status       string   `json:"status"`
+		Skills       int      `json:"skills"`
+		Commands     int      `json:"commands"`
+		Suppress     []string `json:"suppress"`
+		StalePrompts []string `json:"stalePrompts"`
+	}
+
+	plan := &cobra.Command{
+		Use:   "plan",
+		Short: "Show what would be rendered, touching nothing",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := codexsyncConfig(claudeHome, agentsHome, codexHome, backupRoot)
+			if err != nil {
+				return err
+			}
+			p, err := codexsync.BuildPlan(cfg)
+			if err != nil {
+				return err
+			}
+			skills, commands := 0, 0
+			for _, entry := range p.Entries {
+				if entry.Kind == "command" {
+					commands++
+					continue
+				}
+				skills++
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, planResult{
+					Status: "ok", Skills: skills, Commands: commands,
+					Suppress: p.Suppress, StalePrompts: p.StalePrompts,
+				})
+			}
+			_, err = fmt.Fprintf(rt.stdout,
+				"%d skills, %d commands -> %s\n%d duplicate paths suppressed, %d unreadable prompt entries\n",
+				skills, commands, filepath.Join(cfg.AgentsHome, "skills"), len(p.Suppress), len(p.StalePrompts))
+			return err
+		},
+	}
+
+	apply := &cobra.Command{
+		Use:   "apply",
+		Short: "Render the tree, prune what it no longer owns, update config.toml",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := codexsyncConfig(claudeHome, agentsHome, codexHome, backupRoot)
+			if err != nil {
+				return err
+			}
+			p, err := codexsync.BuildPlan(cfg)
+			if err != nil {
+				return err
+			}
+			report, err := codexsync.Apply(cfg, p, dryRun)
+			if err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, report)
+			}
+			_, err = fmt.Fprintf(rt.stdout, "written %d, removed %d, unchanged %d\n",
+				len(report.Written), len(report.Removed), report.Unchanged)
+			if err != nil || report.Backup == "" {
+				return err
+			}
+			_, err = fmt.Fprintf(rt.stdout, "backup %s\n", report.Backup)
+			return err
+		},
+	}
+	apply.Flags().BoolVar(&dryRun, "dry-run", false, "report the changes without writing them")
+
+	check := &cobra.Command{
+		Use:   "check",
+		Short: "Fail when the rendered tree has drifted from the Claude home",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := codexsyncConfig(claudeHome, agentsHome, codexHome, backupRoot)
+			if err != nil {
+				return err
+			}
+			p, err := codexsync.BuildPlan(cfg)
+			if err != nil {
+				return err
+			}
+			if err := codexsync.Check(cfg, p); err != nil {
+				return err
+			}
+			if rt.json {
+				return writeJSON(rt.stdout, map[string]string{"status": "ok"})
+			}
+			_, err = fmt.Fprintln(rt.stdout, "in sync")
+			return err
+		},
+	}
+
+	command.AddCommand(plan, apply, check)
+	return command
 }

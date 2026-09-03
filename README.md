@@ -14,6 +14,7 @@ every item installs independently.
 | `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |
 | `ingressgen` | applet | Render and drift-check complete default-deny Docker ingress policies from a manifest. |
 | `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
+| `codexsync` | applet | Render `~/.claude` skills and commands into `~/.agents/skills`, the structure Codex discovers — nesting preserved, each command a `source-command` skill, duplicate discovery suppressed. → [docs/codexsync.md](docs/codexsync.md) |
 | `press` | applet | Deterministic state for the document family — project resolution, `~/Exports/<project>/` config and index, ARES lookups, shared doctrine. → [docs/press.md](docs/press.md) |
 | `press-pdf` / `press-logo` / `press-offer` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
 
