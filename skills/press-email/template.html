@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{subject}}</title></head>
+<body style="margin:0; padding:0; background-color:#ffffff;">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; font-family:'Segoe UI',-apple-system,Arial,Helvetica,sans-serif; font-size:15px; line-height:1.6; color:#1f2933;">
+
+<tr><td style="padding:0 0 18px 0; border-bottom:3px solid #06b6d4;">
+  <span style="font-size:20px; font-weight:700; letter-spacing:-0.3px; color:#0e7490;">{{brand}}</span>
+  <span style="font-size:13px; color:#5b6b7a;">&nbsp;&nbsp;{{tagline}}</span>
+</td></tr>
+
+<tr><td style="padding:22px 0 0 0;">
+  <p style="margin:0 0 14px 0;">Dobrý den,</p>
+  <p style="margin:0 0 14px 0;">děkuji za hovor. Posílám krátké shrnutí: co produkt dělá, jak to vidím s {{topic}}, ceník a co od vás potřebujeme, abyste mohl začít.</p>
+  <p style="margin:0 0 14px 0;">{{what-the-product-does — 2–3 věty, konkrétně}}</p>
+  <p style="margin:0;">Celý proces si můžete proklikat na <a href="{{demo-url}}" style="color:#0e7490; text-decoration:underline;">{{demo-label}}</a>, kompletní ceník je na <a href="{{pricing-url}}" style="color:#0e7490; text-decoration:underline;">{{pricing-label}}</a>. Na stejném principu už jedou například <strong>{{reference-1}}</strong> (<a href="{{reference-1-url}}" style="color:#0e7490; text-decoration:underline;">{{reference-1-label}}</a>) a <strong>{{reference-2}}</strong> (<a href="{{reference-2-url}}" style="color:#0e7490; text-decoration:underline;">{{reference-2-label}}</a>).</p>
+</td></tr>
+
+<tr><td style="padding:24px 0 8px 0;">
+  <div style="font-size:12px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; color:#0e7490;">{{verdict-heading}} — na rovinu</div>
+</td></tr>
+<tr><td>
+  <p style="margin:0 0 12px 0;">{{honest verdict on what the prospect has — what is unsupported and why, in 2–3 sentences}}</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; margin:0 0 12px 0;">
+    <tr><td style="padding:14px 16px; background-color:#ecfeff; border-left:4px solid #06b6d4;">
+      <strong style="color:#0e7490;">{{callout-title}}</strong><br>
+      <span style="font-size:14px;">{{callout-body}}</span>
+    </td></tr>
+  </table>
+  <p style="margin:0 0 10px 0;"><strong>Doporučuji {{recommended-platform}}.</strong> {{why — verified in production, works without tuning}}</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; border:1px solid #d7e3e8; margin:0 0 12px 0; font-size:14px;">
+    <tr><td style="padding:10px 14px; border-bottom:1px solid #e8eff2; background-color:#fbfeff;">
+      <a href="{{product-1-url}}" style="color:#0e7490; text-decoration:underline;">{{product-1}}</a> — {{product-1-what}}<br>
+      <span style="color:#5b6b7a;">cca {{product-1-price}} s DPH</span></td></tr>
+    <tr><td style="padding:10px 14px;">
+      <a href="{{product-2-url}}" style="color:#0e7490; text-decoration:underline;">{{product-2}}</a> — {{product-2-what}}<br>
+      <span style="color:#5b6b7a;">cca {{product-2-price}} s DPH</span></td></tr>
+  </table>
+  <p style="margin:0; font-size:14px; color:#5b6b7a;">{{where to buy + who connects it}}</p>
+</td></tr>
+
+<tr><td style="padding:24px 0 8px 0;">
+  <div style="font-size:12px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; color:#0e7490;">Ceník</div>
+</td></tr>
+<tr><td>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; border:1px solid #d7e3e8; font-size:14px;">
+    <tr><td style="padding:9px 14px; border-bottom:1px solid #e8eff2;">{{item}}</td>
+        <td align="right" style="padding:9px 14px; border-bottom:1px solid #e8eff2; white-space:nowrap;"><strong>{{price}}</strong></td></tr>
+    <tr><td style="padding:9px 14px; border-bottom:1px solid #e8eff2; background-color:#fbfeff;">{{item}}</td>
+        <td align="right" style="padding:9px 14px; border-bottom:1px solid #e8eff2; background-color:#fbfeff; white-space:nowrap;"><strong>{{price}}</strong></td></tr>
+    <tr><td style="padding:9px 14px; border-bottom:1px solid #e8eff2;">{{item}}</td>
+        <td align="right" style="padding:9px 14px; border-bottom:1px solid #e8eff2; white-space:nowrap;"><strong>{{price}}</strong></td></tr>
+    <tr><td style="padding:9px 14px; border-bottom:1px solid #e8eff2; background-color:#fbfeff;">{{item}}</td>
+        <td align="right" style="padding:9px 14px; border-bottom:1px solid #e8eff2; background-color:#fbfeff; white-space:nowrap;"><strong>{{price}}</strong></td></tr>
+    <tr><td style="padding:9px 14px; border-bottom:1px solid #e8eff2;">{{item}}</td>
+        <td align="right" style="padding:9px 14px; border-bottom:1px solid #e8eff2; white-space:nowrap;"><strong>{{price}}</strong></td></tr>
+    <tr><td style="padding:9px 14px; background-color:#fbfeff;">{{item}}</td>
+        <td align="right" style="padding:9px 14px; background-color:#fbfeff; white-space:nowrap;"><strong>{{price}}</strong></td></tr>
+  </table>
+  <p style="margin:10px 0 0 0; font-size:14px; color:#5b6b7a;">{{pricing-footnote}}</p>
+</td></tr>
+
+<tr><td style="padding:24px 0 8px 0;">
+  <div style="font-size:12px; font-weight:700; letter-spacing:1.2px; text-transform:uppercase; color:#0e7490;">Co od vás potřebujeme</div>
+</td></tr>
+<tr><td>
+  <p style="margin:0 0 12px 0;">Profil vám nastavíme my. Stačí poslat:</p>
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="width:100%; border-collapse:collapse; border:1px solid #d7e3e8; font-size:14px;">
+    <tr><td style="padding:10px 14px; border-bottom:1px solid #e8eff2;"><strong>1. {{need}}</strong> — {{detail}}</td></tr>
+    <tr><td style="padding:10px 14px; border-bottom:1px solid #e8eff2; background-color:#fbfeff;"><strong>2. {{need}}</strong> — {{detail}}</td></tr>
+    <tr><td style="padding:10px 14px; border-bottom:1px solid #e8eff2;"><strong>3. {{need}}</strong> — {{detail}}</td></tr>
+    <tr><td style="padding:10px 14px; background-color:#fbfeff;"><strong>4. {{need}}</strong> — {{detail}}</td></tr>
+  </table>
+  <p style="margin:12px 0 0 0;">{{closing — trial terms + that the sender sets the account up}}</p>
+</td></tr>
+
+<tr><td style="padding:22px 0 0 0; border-top:1px solid #d7e3e8;">
+  <p style="margin:18px 0 2px 0;">S pozdravem,</p>
+  <p style="margin:0 0 2px 0;"><strong style="font-size:16px; color:#1f2933;">{{sender}}</strong></p>
+  <p style="margin:0 0 2px 0; color:#5b6b7a; font-size:14px;">{{brand}}</p>
+  <p style="margin:0; font-size:14px;"><a href="{{web}}" style="color:#0e7490; text-decoration:underline;">{{web-label}}</a></p>
+</td></tr>
+
+</table>
+</body>
+</html>
