@@ -125,6 +125,9 @@ func (t *Tool) Status(slug string, fetch bool) (Result, error) {
 	if s.Phase != PhaseMissing && !s.Pure {
 		notes = append(notes, warn(DiagLineageLeak, leakDetail(s), t.Next(s)[0]))
 	}
+	if s.LastRun != nil && s.LastRun.Status != "completed" && s.LastRun.HeadSHA != s.HeadSHA && s.Phase != PhaseFinished {
+		notes = append(notes, info(DiagDeployInProgress, "a run for an OLDER head "+short(s.LastRun.HeadSHA)+" is still in flight: "+s.LastRun.URL+"; a new dispatch supersedes it", ""))
+	}
 	if s.DeployedSHA != "" && s.DeployedSHA != s.HeadSHA && s.Phase != PhaseFinished {
 		notes = append(notes, info(DiagHeadMoved, "a deploy succeeded at "+short(s.DeployedSHA)+" but the branch head is "+short(s.HeadSHA), "hotfix deploy "+slug+" --watch"))
 	}
@@ -342,6 +345,9 @@ func (t *Tool) Forward(slug string) (Result, error) {
 	}
 	if s.Phase == PhaseMissing || s.Commits == 0 {
 		return Result{}, diag(DiagNoCommits, s.Branch+" has nothing to forward-port", "hotfix status "+slug)
+	}
+	if !s.Pure {
+		return Result{}, diag(DiagLineageLeak, leakDetail(s), t.Next(s)[0])
 	}
 	fv := Vars{Slug: "forward-" + slug, Root: t.Root, From: "origin/" + t.Cfg.DefaultBranch, Branch: "work/forward-" + slug}
 	fv.Name = Expand(t.Cfg.Worktree.Name, fv)

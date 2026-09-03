@@ -352,7 +352,9 @@ func derivePhase(s *State) Phase {
 		return PhaseLeaked
 	case !s.RemoteBranch || !s.Pushed:
 		return PhaseUnpushed
-	case s.LastRun != nil && s.LastRun.Status != "completed":
+	case s.LastRun != nil && s.LastRun.Status != "completed" && s.LastRun.HeadSHA == s.HeadSHA:
+		// Only a run building THIS head counts; an older in-flight run must
+		// not mask a new commit (eve r1).
 		return PhaseDeploying
 	case s.DeployedSHA != "" && s.DeployedSHA == s.HeadSHA:
 		return PhaseDeployed

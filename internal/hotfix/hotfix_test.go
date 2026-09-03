@@ -270,6 +270,8 @@ func TestLineageLeakIsRefused(t *testing.T) {
 	for _, verb := range []func() error{
 		func() error { _, err := tool.PR("leaky", ""); return err },
 		func() error { _, err := tool.Deploy("leaky", false, true); return err },
+		func() error { _, err := tool.Forward("leaky"); return err },
+		func() error { _, err := tool.Finish("leaky", true); return err },
 	} {
 		if err := verb(); !hasCode(err, DiagLineageLeak) {
 			t.Fatalf("verb accepted a leaked branch: %v", err)
@@ -366,7 +368,8 @@ func TestDerivePhaseTable(t *testing.T) {
 		{"no pr", State{Commits: 1, Pure: true, RemoteBranch: true, Pushed: true}, PhaseNoPR},
 		{"closed pr is no pr", State{Commits: 1, Pure: true, RemoteBranch: true, Pushed: true, PR: &PRInfo{State: "CLOSED"}}, PhaseNoPR},
 		{"ready", State{Commits: 1, Pure: true, RemoteBranch: true, Pushed: true, PR: open}, PhaseReady},
-		{"deploying", State{Commits: 1, Pure: true, RemoteBranch: true, Pushed: true, PR: open, LastRun: &RunInfo{Status: "in_progress"}}, PhaseDeploying},
+		{"deploying", State{Commits: 1, Pure: true, RemoteBranch: true, Pushed: true, PR: open, HeadSHA: "x", LastRun: &RunInfo{Status: "in_progress", HeadSHA: "x"}}, PhaseDeploying},
+		{"stale run does not mask new head", State{Commits: 2, Pure: true, RemoteBranch: true, Pushed: true, PR: open, HeadSHA: "y", LastRun: &RunInfo{Status: "in_progress", HeadSHA: "x"}}, PhaseReady},
 		{"deployed", State{Commits: 1, Pure: true, RemoteBranch: true, Pushed: true, PR: open, HeadSHA: "x", DeployedSHA: "x", LastRun: &RunInfo{Status: "completed"}}, PhaseDeployed},
 		{"head moved", State{Commits: 2, Pure: true, RemoteBranch: true, Pushed: true, PR: open, HeadSHA: "y", DeployedSHA: "x", LastRun: &RunInfo{Status: "completed"}}, PhaseReady},
 	}
