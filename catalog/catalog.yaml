@@ -37,6 +37,12 @@ items:
     description: Render and drift-check complete default-deny DOCKER-USER iptables policies from project-owned manifests.
     applet: ingressgen
 
+  - id: hotfix
+    kind: applet
+    status: experimental
+    description: Release-lineage hotfix lane for trunk-based repos — cut a branch from the tag production runs in an isolated worktree, open the PR that is both CI gate and forward-port, deploy production FROM the branch, merge once shipped; state re-derived from git + gh, every verb idempotent with a JSON envelope.
+    applet: hotfix
+
   - id: prm
     kind: skill
     status: experimental
@@ -60,6 +66,12 @@ items:
     status: experimental
     description: Doctrine for building AI-first CLI tools and their thin-wrapper skills — envelope contract, closed diagnostics, Go/Charm patterns.
     source: skills/cli-craft
+
+  - id: hotfix-lane
+    kind: skill
+    status: experimental
+    description: Thin wrapper skill for the hotfix applet — the ordered verbs and the hard laws (never merge main into a hotfix branch, deploy only from the branch).
+    source: skills/hotfix-lane
 
   - id: press-pdf
     kind: skill
@@ -88,6 +100,8 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - hotfix
+      - hotfix-lane
       - prm
       - prc
       - merge
