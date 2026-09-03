@@ -345,9 +345,7 @@ func TestOpenDiagnostics(t *testing.T) {
 		t.Fatalf("infer on main: %v", err)
 	}
 	// A missing hotfix reports exactly one diagnostic: the branch is missing.
-	if _, err := tool.R.Run(dir, "git", "commit", "-q", "--allow-empty", "-m", "root"); err != nil {
-		t.Fatal(err)
-	}
+	git(t, dir, "commit", "-q", "--allow-empty", "-m", "root")
 	res, err = tool.Status("nope", false)
 	if err != nil || res.Data.(*State).Phase != PhaseMissing || len(res.Diagnostics) != 1 || res.Diagnostics[0].Code != DiagBranchMissing {
 		t.Fatalf("status on missing: %v %+v", err, res.Diagnostics)
