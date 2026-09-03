@@ -50,6 +50,26 @@ outside memory homes, exits 2 to refuse a write. It refuses two things:
   the tool and sending the caller to Bash or `memorylint new`. Team homes are
   unaffected; `memorylint fix` repairs already-drifted notes.
 
+## Handoff homes
+
+`~/.claude/handoffs/` is linted with its own schema instead of the memory one —
+the same `check` and `hook` entry points, dispatched by path. A handoff is
+`<project>/<slug>.md` or `<project>/<slug>/handoff.md`, live or under
+`<project>/archive/`; any other `.md` is a context file and gets only the
+secret scan (M011 — handoffs are machine-local and may name servers and people).
+
+```yaml
+name: <slug>              # H001 — must equal the slug
+description: <one line>
+status: open              # open · in-progress · done · abandoned
+created: YYYY-MM-DD
+created-by: <session id>  # uuid, or `unknown` for pre-schema handoffs
+sessions: [<session id>]  # every session that worked it, created-by first
+```
+
+H002: `done`/`abandoned` belong under `archive/`, `open`/`in-progress` outside
+it. H003 (warning, never a write block): a handoff is at most 200 lines.
+
 ## Configuration
 
 `.memorylint.yaml` at the lint root:
