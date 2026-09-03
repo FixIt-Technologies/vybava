@@ -18,6 +18,7 @@ import (
 	"github.com/FixIt-Technologies/vybava/internal/installer"
 	"github.com/FixIt-Technologies/vybava/internal/memorylint"
 	"github.com/FixIt-Technologies/vybava/internal/perfrig"
+	"github.com/FixIt-Technologies/vybava/internal/runx"
 	"github.com/FixIt-Technologies/vybava/internal/state"
 	"github.com/FixIt-Technologies/vybava/internal/ui"
 	"github.com/spf13/cobra"
@@ -85,6 +86,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "ingressgen" {
 		return rt.ingressgenApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "hotfix" {
+		return rt.hotfixApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -108,6 +112,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.shrtCommand("shrt [url...]"),
 		rt.pressCommand("press"),
 		rt.ingressgenCommand("ingressgen"),
+		rt.hotfixCommand("hotfix"),
 		rt.browseCommand(),
 	)
 	return root, nil
@@ -892,6 +897,10 @@ func KnownApplet(invokedAs string) bool {
 func ExitCode(err error) int {
 	if err == nil {
 		return 0
+	}
+	var coder runx.ExitCoder
+	if errors.As(err, &coder) {
+		return coder.ExitCode()
 	}
 	if errors.Is(err, ErrFindings) {
 		return 1
