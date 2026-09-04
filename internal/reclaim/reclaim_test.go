@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -306,5 +307,58 @@ func TestSandboxTmpExceptsMessagesAndSignedDelta(t *testing.T) {
 	}
 	if Signed(-5<<20) != "-5.0M" || Signed(3<<30) != "+3.0G" {
 		t.Fatalf("Signed: %s %s", Signed(-5<<20), Signed(3<<30))
+	}
+}
+
+// A locked file (macOS user-immutable flag) is the one deletion failure a
+// non-root test can stage. The tree walk must delete everything around it,
+// count only what it removed, surface the error, and the ladder must carry on
+// with the next step — a half-freed disk is still the goal.
+func TestPartialFailureIsAggregatedAndTheLadderContinues(t *testing.T) {
+	if goos := os.Getenv("GOOS"); goos != "" && goos != "darwin" {
+		t.Skip("chflags uchg is macOS-only")
+	}
+	if _, err := exec.LookPath("chflags"); err != nil {
+		t.Skip("chflags not available")
+	}
+	home := t.TempDir()
+	locked := filepath.Join(home, "Library/Caches/go-build/locked")
+	write(t, locked, 100, 0)
+	write(t, filepath.Join(home, "Library/Caches/go-build/sub/free"), 300, 0)
+	write(t, filepath.Join(home, ".npm/_cacache/x"), 50, 0)
+	if out, err := exec.Command("chflags", "uchg", locked).CombinedOutput(); err != nil {
+		t.Skipf("cannot lock file: %v %s", err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("chflags", "nouchg", locked).Run() })
+
+	n, err := removeTree(context.Background(), filepath.Join(home, "Library/Caches/go-build"), false)
+	if err == nil {
+		t.Fatal("a locked file must surface as an error")
+	}
+	if n != 300 {
+		t.Fatalf("only the deleted bytes count: got %d, want 300", n)
+	}
+	if _, err := os.Stat(filepath.Join(home, "Library/Caches/go-build/sub")); !os.IsNotExist(err) {
+		t.Fatal("the deletable sibling subtree must be gone")
+	}
+	if _, err := os.Stat(locked); err != nil {
+		t.Fatal("the locked file must still exist")
+	}
+
+	write(t, filepath.Join(home, "Library/Caches/go-build/sub/free"), 300, 0)
+	env := newFakeEnv(t, home, 1<<30)
+	rep, err := Run(context.Background(), env.Env, Options{Only: []string{"go-build,npm"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]Result{}
+	for _, r := range rep.Results {
+		byID[r.ID] = r
+	}
+	if r := byID["go-build"]; r.Status != StatusFailed || r.Bytes != 300 || !strings.Contains(r.Error, "locked") {
+		t.Fatalf("go-build should report the partial failure with its bytes: %+v", r)
+	}
+	if r := byID["npm"]; r.Status != StatusDone || r.Bytes != 50 {
+		t.Fatalf("the ladder must continue past a failed step: %+v", r)
 	}
 }
