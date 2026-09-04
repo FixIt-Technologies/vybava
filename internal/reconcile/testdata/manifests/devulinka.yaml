@@ -1,4 +1,4 @@
-# reconcile.yaml — devulinka-infra (Devulinka 95.216.27.220 / 10.8.1.1).
+# reconcile.yaml — devulinka-infra (Devulinka 116.202.48.148 / 10.8.1.1).
 # Port of scripts/infra-reconcile/map-paths.sh: mappings are ordered `case`
 # arms, first match wins, `*` matches across `/` exactly like bash.
 #
