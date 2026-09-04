@@ -1,0 +1,75 @@
+# reconcile.yaml — webulinka-infra (Webulinka 116.202.15.49 / 10.7.3.1).
+# Port of scripts/infra-reconcile/map-paths.sh: mappings are ordered `case`
+# arms, first match wins, `*` matches across `/` exactly like bash.
+#
+# V1 SCOPE (deliberately narrow — widen per-scope after the report-mode review):
+#   host/nginx-proxy/conf.d/*.{conf,inc}  → /opt/nginx-proxy/conf.d/
+#   host/nginx-proxy/nginx.conf     → /opt/nginx-proxy/nginx.conf
+#   scripts/**                      → /opt/scripts/
+#   apps/<app>/**                   → /opt/apps/<app>/   (only if the live dir exists)
+# Skipped on purpose: Deployik-generated vhosts (deployik-*.conf exist only on
+# the box and are never mapped), *.age + any .env, *.md, host/docker +
+# host/netplan + systemd/ + wireguard/ (root-owned / host-provisioning —
+# deliberate manual deploys).
+#
+# Known live/repo name gaps V1 leaves alone (live dir absent or renamed, so
+# apps mappings self-skip): apps/voke-platform (live dir is /opt/apps/voke2),
+# live-only /opt/apps/energy-power-servis and /opt/apps/wg-dns.
+schema_version: 1
+repo: webulinka-infra
+host_label: lovinka-vps # prod hosts-registry label (eve monitor)
+# clone defaults to this file's directory (/root/infra/webulinka-infra on the box)
+mode_file: ~/.config/infra-reconcile/mode
+state_dir: ~/.local/state/infra-reconcile
+lock_file: /tmp/infra-reconcile.lock
+apps_root: /opt/apps
+# metrics_file: /opt/monitoring/textfile/infra-reconcile.prom
+# vybava_version: v0.0.0  # pin the release the box installs
+
+# Apps whose compose changes may auto-`docker compose up -d` after converge.
+# Empty by default — every app is "converge file + ping to roll manually".
+auto_roll_apps: []
+
+skip: ["*.age", ".env*", "*/.env*", "*.md"]
+
+mappings:
+  - match: ["apps/_shared/*"]
+    skip: true
+  - match: ["host/nginx-proxy/conf.d/*.conf", "host/nginx-proxy/conf.d/*.inc"]
+    strip: host/nginx-proxy/conf.d/
+    dest: /opt/nginx-proxy/conf.d/{rest}
+    hook: nginx
+  - match: [host/nginx-proxy/nginx.conf]
+    dest: /opt/nginx-proxy/nginx.conf
+    hook: nginx
+  - match: ["host/*"] # docker/netplan: host-provisioning, manual
+    skip: true
+  - match: ["scripts/infra-reconcile/*"] # the tool itself runs from the clone
+    skip: true
+  - match: ["scripts/*"]
+    strip: scripts/
+    dest: /opt/scripts/{rest}
+    hook: none
+  - match: ["apps/*/*"]
+    strip: apps/
+    dest: /opt/apps/{rest}
+    hook: compose
+    require_live_dir: true
+
+# nginx runs in the proxy container on this box.
+hooks:
+  nginx:
+    workdir: /opt/nginx-proxy
+    test: [docker, compose, exec, -T, nginx, nginx, -t]
+    reload: [docker, compose, exec, -T, nginx, nginx, -s, reload]
+  compose: [docker, compose, up, -d]
+
+alerts:
+  - type: telegram
+    lib: /opt/scripts/lib/telegram-notify.sh
+    channel: lovinka_monitoring
+  - type: eve-monitor
+    config: ~/.config/infra-reconcile/eve-webhook
+
+serve:
+  listen: 10.7.3.1:9470

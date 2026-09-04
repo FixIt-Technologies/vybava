@@ -41,6 +41,7 @@ type runtime struct {
 	catalog   catalog.Catalog
 	installer installer.Installer
 	json      bool
+	version   string
 	stdout    io.Writer
 	stderr    io.Writer
 	stdin     io.Reader
@@ -65,7 +66,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		return nil, err
 	}
 	rt := &runtime{
-		catalog: c, stdout: a.Stdout, stderr: a.Stderr, stdin: a.Stdin,
+		catalog: c, stdout: a.Stdout, stderr: a.Stderr, stdin: a.Stdin, version: a.Version,
 		installer: installer.Installer{Payload: assets.FS, Store: store},
 	}
 	if filepath.Base(invokedAs) == "memorylint" {
@@ -88,6 +89,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	}
 	if filepath.Base(invokedAs) == "hotfix" {
 		return rt.hotfixApplet(), nil
+	}
+	if filepath.Base(invokedAs) == "reconcile" {
+		return rt.reconcileApplet(), nil
 	}
 
 	root := &cobra.Command{
@@ -113,6 +117,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.pressCommand("press"),
 		rt.ingressgenCommand("ingressgen"),
 		rt.hotfixCommand("hotfix"),
+		rt.reconcileCommand("reconcile"),
 		rt.browseCommand(),
 	)
 	return root, nil

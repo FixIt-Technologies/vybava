@@ -37,6 +37,12 @@ items:
     description: Render and drift-check complete default-deny DOCKER-USER iptables policies from project-owned manifests.
     applet: ingressgen
 
+  - id: reconcile
+    kind: applet
+    status: experimental
+    description: Pull-based GitOps engine for the infra boxes — converge a VPS to its infra repo's merged main from a per-box manifest, with HELD hotfix detection, transactional nginx hooks, git-commit rollback, textfile metrics and a mesh-only status page.
+    applet: reconcile
+
   - id: hotfix
     kind: applet
     status: experimental
@@ -146,6 +152,7 @@ groups:
       - perfrig
       - shrt
       - ingressgen
+      - reconcile
       - prm
       - prc
       - merge
