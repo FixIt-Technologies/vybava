@@ -355,8 +355,8 @@ func (s *sweep) file(rp string) {
 	liveSHA := fileSHA(t.Dest)
 
 	apply := func(label string) {
-		if t.Hook == HookNginx {
-			s.snapshotNginx(rp, t.Dest)
+		if t.Hook == HookNginx && !s.snapshotNginx(rp, t.Dest) {
+			return // no snapshot, no overwrite: the transaction rolls back without it
 		}
 		if err := applyFile(src, t.Dest); err != nil {
 			s.res.Errors = append(s.res.Errors, classifyWriteError(rp, t.Dest, t.Owner, err))
@@ -407,14 +407,15 @@ func (s *sweep) file(rp string) {
 
 // snapshotNginx must run BEFORE overwriting dest: nginx files converge as a
 // transaction and are restored (with their applied record) if the shared
-// nginx -t fails, so a bad conf never stays live-and-adopted.
-func (s *sweep) snapshotNginx(rp, dest string) {
+// nginx -t fails, so a bad conf never stays live-and-adopted. false = the
+// snapshot failed and dest must not be touched.
+func (s *sweep) snapshotNginx(rp, dest string) bool {
 	if s.rbDir == "" {
 		dir, err := os.MkdirTemp(s.st.Dir, "rollback.")
 		if err != nil {
 			s.errorf("write", rp, "cannot create rollback dir: %v", err)
 			s.copyFail = true
-			return
+			return false
 		}
 		s.rbDir = dir
 	}
@@ -424,17 +425,18 @@ func (s *sweep) snapshotNginx(rp, dest string) {
 		if err != nil {
 			s.errorf("write", rp, "cannot snapshot %s: %v", dest, err)
 			s.copyFail = true
-			return
+			return false
 		}
 		snap = f.Name()
 		f.Close()
 		if err := copyPreserve(dest, snap); err != nil {
 			s.errorf("write", rp, "cannot snapshot %s: %v", dest, err)
 			s.copyFail = true
-			return
+			return false
 		}
 	}
 	s.nginxRB = append(s.nginxRB, nginxRB{rp: rp, dest: dest, snap: snap})
+	return true
 }
 
 // rollbackNginx restores every snapshotted nginx file; returns the count.
