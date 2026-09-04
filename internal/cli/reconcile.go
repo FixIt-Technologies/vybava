@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"syscall"
@@ -35,12 +36,21 @@ func (rt *runtime) reconcileCommand(use string) *cobra.Command {
 	}
 	command.PersistentFlags().StringVar(&manifestPath, "manifest", "reconcile.yaml", "per-box manifest (clone root)")
 
+	// Under --json stdout carries ONLY the JSON document: the engine's tick log
+	// moves to stderr so `vybava reconcile status --json | jq` never sees a
+	// "[ts] pending converge …" line ahead of the document.
+	logOut := func() io.Writer {
+		if rt.json {
+			return rt.stderr
+		}
+		return rt.stdout
+	}
 	engine := func() (*reconcile.Engine, error) {
 		m, err := reconcile.Load(manifestPath)
 		if err != nil {
 			return nil, err
 		}
-		return &reconcile.Engine{M: m, Version: rt.version, Out: rt.stdout, Err: rt.stderr}, nil
+		return &reconcile.Engine{M: m, Version: rt.version, Out: logOut(), Err: rt.stderr}, nil
 	}
 	emit := func(res reconcile.Result) error {
 		if rt.json {

@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -362,6 +363,23 @@ func TestBashParity(t *testing.T) {
 		if _, err := f.run("status", "--json"); err != nil {
 			t.Fatal(err)
 		}
+		// --json: stdout is exactly one JSON document; the tick log goes to stderr
+		// (a consumer does `status --json | jq` — a log line first breaks it).
+		var stdout, stderr bytes.Buffer
+		jsonCmd, err := (cli.App{Stdout: &stdout, Stderr: &stderr}).Command("reconcile")
+		if err != nil {
+			t.Fatal(err)
+		}
+		jsonCmd.SetArgs([]string{"--manifest", f.man, "status", "--json"})
+		must(t, jsonCmd.Execute())
+		var doc map[string]any
+		if err := json.Unmarshal(stdout.Bytes(), &doc); err != nil {
+			t.Fatalf("status --json stdout is not a single JSON document: %v\n%s", err, stdout.String())
+		}
+		if !strings.HasPrefix(strings.TrimSpace(stdout.String()), "{") {
+			t.Fatalf("status --json stdout must start with the document, got: %q", stdout.String())
+		}
+		_ = stderr // the tick log, if any, lands here — never on stdout
 		headAfter, _ := exec.Command("git", "-C", f.repo, "rev-parse", "HEAD").Output()
 		if string(headBefore) != string(headAfter) {
 			t.Fatal("status moved the checkout")
