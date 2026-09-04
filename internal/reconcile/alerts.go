@@ -63,7 +63,9 @@ func (e *Engine) notifyTelegram(a Alert, digest string) error {
 	if _, err := os.Stat(a.Lib); err != nil {
 		return nil
 	}
-	cmd := exec.Command("bash", "-c", `. "$0" && notify_telegram "$@"`, a.Lib,
+	// The library is sourced from $1, never $0: telegram-notify.sh refuses to
+	// run when BASH_SOURCE[0] == $0, which is exactly what `. "$0"` triggers.
+	cmd := exec.Command("bash", "-c", `. "$1"; shift; notify_telegram "$@"`, "vybava-reconcile", a.Lib,
 		a.Channel, "⚠️", "infra-reconcile ("+e.M.Repo+")", digest)
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
