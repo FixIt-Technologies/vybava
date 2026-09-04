@@ -164,7 +164,9 @@ func TestAlertsDedupPerChannel(t *testing.T) {
 	}))
 	defer eve.Close()
 	lib := filepath.Join(b.root, "telegram-notify.sh")
-	mustT(t, os.WriteFile(lib, []byte("notify_telegram() { printf '%s|%s|%s\\n' \"$1\" \"$2\" \"$3\" >> "+b.root+"/tg; [ ! -f "+b.root+"/tg-fails ]; }\n"), 0o644))
+	// Same guard as the real /opt/scripts/lib/telegram-notify.sh: refuse when executed, allow when sourced.
+	mustT(t, os.WriteFile(lib, []byte("if [[ \"${BASH_SOURCE[0]}\" == \"${0}\" ]]; then echo 'meant to be sourced, not executed' >&2; exit 2; fi\n"+
+		"notify_telegram() { printf '%s|%s|%s\\n' \"$1\" \"$2\" \"$3\" >> "+b.root+"/tg; [ ! -f "+b.root+"/tg-fails ]; }\n"), 0o644))
 	cfg := filepath.Join(b.root, "eve-webhook")
 	mustT(t, os.WriteFile(cfg, []byte("EVE_MONITOR_URL="+eve.URL+"\nEVE_MONITOR_TOKEN=tok\n"), 0o600))
 	b.m.Alerts = []Alert{{Type: "telegram", Lib: lib, Channel: "chan"}, {Type: "eve-monitor", Config: cfg}}
