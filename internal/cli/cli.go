@@ -93,6 +93,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "reconcile" {
 		return rt.reconcileApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "reclaim" {
+		return rt.reclaimApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -118,6 +121,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.ingressgenCommand("ingressgen"),
 		rt.hotfixCommand("hotfix"),
 		rt.reconcileCommand("reconcile"),
+		rt.reclaimCommand("reclaim"),
 		rt.browseCommand(),
 	)
 	return root, nil
