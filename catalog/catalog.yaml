@@ -91,6 +91,12 @@ items:
     description: Czech commercial offer documents (cenova nabidka, functional specification, impact analysis) as editable DOCX in the issuer's house style.
     source: skills/press-offer
 
+  - id: press-email
+    kind: skill
+    status: experimental
+    description: Client and prospect emails as one Outlook-paste HTML per project — inline-styled house markup, project fact sheet, browser-verified links.
+    source: skills/press-email
+
 groups:
   - id: recommended
     description: Stable baseline suitable for every workstation and project.
@@ -112,6 +118,7 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - press-email
       - ingressgen
       - cli-craft
 
@@ -122,6 +129,7 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - press-email
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -145,4 +153,5 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - press-email
       - cli-craft

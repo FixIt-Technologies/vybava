@@ -1,6 +1,6 @@
 # Press family — conventions (v1.0.0)
 
-The single source of truth for the `press-logo` and `press-pdf` skills and the `press`
+The single source of truth for the `press-logo`, `press-pdf`, `press-offer` and `press-email` skills and the `press`
 CLI. The CLI is the ONLY writer of family state — skills never hand-edit
 `.press.conf.json` or the autogen block of `PRESS.md`.
 
@@ -18,10 +18,13 @@ CLI. The CLI is the ONLY writer of family state — skills never hand-edit
     │   ├── exploration/          # every explored SVG take
     │   ├── final/                # master SVGs
     │   └── exports/              # generated rasters (PNG/ICO)
-    └── pdf/                      # press-pdf home (whole pipeline lives here)
-        ├── offer/<slug>/         # one build dir per offer
-        ├── documentation/<slug>/ # internal + external editions of the same sources
-        └── legal/<slug>/         # documents meant for signature
+    ├── pdf/                      # press-pdf home (whole pipeline lives here)
+    │   ├── offer/<slug>/         # one build dir per offer
+    │   ├── documentation/<slug>/ # internal + external editions of the same sources
+    │   └── legal/<slug>/         # documents meant for signature
+    └── emails/                   # press-email home
+        ├── FACTS.md              # project fact sheet: prices + their source, links, references, voice
+        └── <date>-<slug>-<lang>.html  # one Outlook-paste HTML per email (threads: <client>/)
 ```
 
 Rules:
