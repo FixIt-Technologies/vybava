@@ -22,7 +22,10 @@ func removeTree(ctx context.Context, path string, dry bool) (int64, error) {
 		if dry {
 			return size, nil
 		}
-		return size, os.Remove(path)
+		if err := os.Remove(path); err != nil {
+			return 0, err // count only what actually left the disk
+		}
+		return size, nil
 	}
 	var total int64
 	var errs []error
@@ -42,7 +45,9 @@ func removeTree(ctx context.Context, path string, dry bool) (int64, error) {
 			if !dry {
 				_ = os.Chmod(child, 0o700)
 				if _, retry := os.Lstat(child); retry == nil {
+					left, _ := treeSize(ctx, child) // what the first pass could not remove
 					if err2 := os.RemoveAll(child); err2 == nil {
+						total += left
 						continue
 					}
 				}
