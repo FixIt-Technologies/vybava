@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -97,15 +96,6 @@ func removeAged(ctx context.Context, root string, cutoff time.Time, dry bool) (i
 		return nil
 	})
 	return total, err
-}
-
-// Free reports the bytes available to the user and the volume size.
-func Free(volume string) (free, total int64, err error) {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(volume, &st); err != nil {
-		return 0, 0, err
-	}
-	return int64(st.Bavail) * int64(st.Bsize), int64(st.Blocks) * int64(st.Bsize), nil
 }
 
 // treeSize walks without deleting; used only by dry runs of command steps
