@@ -10,7 +10,8 @@ import (
 type Evidence struct {
 	Branches []BranchRef
 	PRs      []PRRef
-	Merged   bool // the Branch line says the work is merged
+	Mentions []PRRef // PRs named below the first heading — context, never evidence
+	Merged   bool    // the Branch line says the work is merged
 }
 
 // BranchRef names a branch; Repo is a repo name or project slug, "" meaning
@@ -51,9 +52,12 @@ var (
 	branchStopwords = set("none", "n/a", "whatever", "start", "work", "tbd", "aggregate", "primary", "origin")
 )
 
-// Extract reads the Branch line(s) and PR references out of a handoff body.
+// Extract reads the Branch line(s) and PR references out of a handoff. Only
+// the header (everything above the first `## ` heading) is evidence; PRs named
+// further down are mentions.
 func Extract(body string) Evidence {
 	var ev Evidence
+	header, rest := splitHeader(body)
 	seen := map[BranchRef]bool{}
 	addBranch := func(repo, branch string) {
 		branch = strings.TrimPrefix(branch, "origin/")
@@ -69,7 +73,7 @@ func Extract(body string) Evidence {
 			ev.Branches = append(ev.Branches, ref)
 		}
 	}
-	for _, text := range branchLines(body) {
+	for _, text := range branchLines(header) {
 		if mergedRE.MatchString(notMerged.ReplaceAllString(text, "")) {
 			ev.Merged = true
 		}
@@ -102,28 +106,44 @@ func Extract(body string) Evidence {
 			}
 		}
 	}
-	prSeen := map[PRRef]bool{}
-	addPR := func(repo, number string) {
+	ev.PRs = prRefs(header)
+	ev.Mentions = prRefs(rest)
+	return ev
+}
+
+// splitHeader cuts a handoff at its first `## ` heading.
+func splitHeader(body string) (header, rest string) {
+	if i := strings.Index("\n"+body, "\n## "); i >= 0 {
+		return body[:i], body[i:]
+	}
+	return body, ""
+}
+
+// prRefs finds every PR reference in text, deduplicated, in order of first sight.
+func prRefs(text string) []PRRef {
+	var out []PRRef
+	seen := map[PRRef]bool{}
+	add := func(repo, number string) {
 		n, err := strconv.Atoi(number)
 		if err != nil {
 			return
 		}
 		ref := PRRef{Repo: repo, Number: n}
-		if !prSeen[ref] {
-			prSeen[ref] = true
-			ev.PRs = append(ev.PRs, ref)
+		if !seen[ref] {
+			seen[ref] = true
+			out = append(out, ref)
 		}
 	}
-	for _, m := range prURL.FindAllStringSubmatch(body, -1) {
-		addPR(m[1], m[2])
+	for _, m := range prURL.FindAllStringSubmatch(text, -1) {
+		add(m[1], m[2])
 	}
-	for _, m := range prRepoRef.FindAllStringSubmatch(body, -1) {
-		addPR(m[1], m[2])
+	for _, m := range prRepoRef.FindAllStringSubmatch(text, -1) {
+		add(m[1], m[2])
 	}
-	for _, m := range prWord.FindAllStringSubmatch(body, -1) {
-		addPR("", m[1])
+	for _, m := range prWord.FindAllStringSubmatch(text, -1) {
+		add("", m[1])
 	}
-	return ev
+	return out
 }
 
 // branchLines returns the text after each `**Branch…:**` marker, joined with

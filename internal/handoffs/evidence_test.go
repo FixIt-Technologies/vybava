@@ -13,6 +13,7 @@ func TestExtract(t *testing.T) {
 		name, body string
 		branches   []BranchRef
 		prs        []PRRef
+		mentions   []PRRef
 		merged     bool
 	}{
 		{
@@ -84,6 +85,13 @@ func TestExtract(t *testing.T) {
 			body: "No branch.\n\nSee https://github.com/LEFTEQ/FixIt/pull/644 and LEFTEQ/vitrinka#12, then PR #644 again.\n",
 			prs:  []PRRef{{"LEFTEQ/FixIt", 644}, {"LEFTEQ/vitrinka", 12}, {"", 644}},
 		},
+		{
+			name:     "below the first heading is a mention, not evidence",
+			body:     "**Branch:** work/x @ abc1234 (PR #7)\n\n## Context\n\nStart after LEFTEQ/FixIt#644 merges; **Branch:** work/other @ abc1234\n",
+			branches: []BranchRef{{"", "work/x"}},
+			prs:      []PRRef{{"", 7}},
+			mentions: []PRRef{{"LEFTEQ/FixIt", 644}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -94,6 +102,9 @@ func TestExtract(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got.PRs, c.prs) {
 				t.Errorf("PRs = %v, want %v", got.PRs, c.prs)
+			}
+			if !reflect.DeepEqual(got.Mentions, c.mentions) {
+				t.Errorf("Mentions = %v, want %v", got.Mentions, c.mentions)
 			}
 			if got.Merged != c.merged {
 				t.Errorf("Merged = %v, want %v", got.Merged, c.merged)

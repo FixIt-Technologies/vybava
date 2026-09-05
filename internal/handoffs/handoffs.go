@@ -59,6 +59,7 @@ type Item struct {
 	Reason   string   `json:"reason"`
 	Branches []string `json:"branches"` // repo@branch
 	PRs      []string `json:"prs"`      // owner/repo#N, or #N when the repo is unknown
+	Mentions []string `json:"mentions"` // PRs named below the first heading; context, never evidence
 	Archived string   `json:"archived,omitempty"`
 }
 
@@ -188,9 +189,12 @@ func scan(home, project string) ([]candidate, error) {
 func judge(ctx context.Context, env Env, res *resolver, opts Options, c candidate) Item {
 	item := Item{
 		Path: c.path, Project: c.project, Slug: c.slug, Status: c.status,
-		Branches: []string{}, PRs: []string{},
+		Branches: []string{}, PRs: []string{}, Mentions: []string{},
 	}
 	ev := Extract(string(c.data))
+	for _, p := range ev.Mentions {
+		item.Mentions = append(item.Mentions, fmt.Sprintf("%s#%d", p.Repo, p.Number))
+	}
 	var live, unknown, dead []string
 	for _, b := range ev.Branches {
 		if isDefaultBranch(b.Branch) {

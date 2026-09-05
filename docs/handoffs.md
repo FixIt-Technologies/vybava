@@ -19,10 +19,12 @@ are never read.
 
 ## Evidence
 
-From the `**Branch:**` / `**Branches…:**` line (plus its wrapped lines):
+Only the handoff **header** — everything above the first `## ` heading — is
+evidence. From its `**Branch:**` / `**Branches…:**` line (plus wrapped lines):
 `branch @ sha`, `` `branch` @ `sha` ``, `` repo `branch` ``, `` `repo@branch` ``,
-`` `branch` — repo @ sha · repo2 @ sha ``, and the word MERGED. From the whole
-body: `PR #N`, `owner/repo#N`, `github.com/owner/repo/pull/N`.
+`` `branch` — repo @ sha · repo2 @ sha ``, and the word MERGED. From the header text: `PR #N`, `owner/repo#N`,
+`github.com/owner/repo/pull/N`. PRs named below the first heading ("start after
+PR #644 merges") are reported as `mentions` and never make a verdict dead.
 
 A repo name or the handoff's project slug resolves to a checkout through the
 Path column of `~/.claude/docs/timesheet-repo-registry.md` (basename
@@ -45,4 +47,4 @@ moves the file (or the whole `<slug>/` directory) under `<project>/archive/`,
 suffixing `-YYYYMMDD` when the name is taken. Nothing is ever deleted.
 
 The `--json` shape: `{items: [{path, project, slug, status, verdict, reason,
-branches, prs, archived?}], summary: {live, dead, unknown, archived}}`.
+branches, prs, mentions, archived?}], summary: {live, dead, unknown, archived}}`.

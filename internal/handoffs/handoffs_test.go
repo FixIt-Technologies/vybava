@@ -98,6 +98,7 @@ func TestVerdicts(t *testing.T) {
 		{"repo not found", "mystery", "**Branch:** work/alive @ abc1234", 0, VerdictUnknown, "repo not found: mystery"},
 		{"PR state unknown", "fixit", "**Branch:** work/gone @ abc1234 (PR #99)", 0, VerdictUnknown, "PR LEFTEQ/FixIt#99 state unknown"},
 		{"walked repo", "forge", "**Branch:** feat/product @ abc1234", 0, VerdictLive, "branch forge@feat/product live"},
+		{"merged PR mentioned below the header", "fixit", "No branch yet.\n\n## Plan\n\nStart after PR #10 merges.", 0, VerdictUnknown, "no branch/PR evidence"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
