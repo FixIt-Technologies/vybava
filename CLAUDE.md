@@ -19,6 +19,11 @@ in `docs/`; lessons in `.claude/memory/MEMORY.md`.
   support stable `--json` and non-interactive execution.
 - Tagged releases publish a Homebrew cask via the tap deploy key — read
   `docs/homebrew.md` before touching release distribution.
+- `ci/` is the ONLY pipeline-facing surface: CI images, workflows and
+  provisioning scripts install a tagged release through `ci/install.sh` and
+  never check this repository out (`scripts/`, `skills/`, `docs/` and the Go
+  sources are internal). Contract + consumers: `ci/README.md`; tests in
+  `internal/ciinstall`. Pins move only after a release is cut.
 - The repo-root `Dockerfile` is the luko.to redirector image (deployik app
   `luko`, build context = Dockerfile's directory, so it must stay at the
   root). `internal/shrt/rules.go` ships in BOTH the CLI and the server —
