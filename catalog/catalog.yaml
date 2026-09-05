@@ -43,11 +43,29 @@ items:
     description: Render ~/.claude skills and commands into ~/.agents/skills, the structure Codex actually discovers — nesting preserved, each command a source-command skill, duplicate discovery suppressed in config.toml.
     applet: codexsync
 
+  - id: reconcile
+    kind: applet
+    status: experimental
+    description: Pull-based GitOps engine for the infra boxes — converge a VPS to its infra repo's merged main from a per-box manifest, with HELD hotfix detection, transactional nginx hooks, git-commit rollback, textfile metrics and a mesh-only status page.
+    applet: reconcile
+
   - id: hotfix
     kind: applet
     status: experimental
     description: Release-lineage hotfix lane for trunk-based repos — cut a branch from the tag production runs in an isolated worktree, open the PR that is both CI gate and forward-port, deploy production FROM the branch, merge once shipped; state re-derived from git + gh, every verb idempotent with a JSON envelope.
     applet: hotfix
+
+  - id: reclaim
+    kind: applet
+    status: experimental
+    description: Emergency disk reclaim for a dev Mac — a fixed ladder of regenerating caches deleted biggest-first with live df after every step, an early-stop target, and by-hand notes for what it refuses to touch (volumes, recordings).
+    applet: reclaim
+
+  - id: handoffs
+    kind: applet
+    status: experimental
+    description: Handoff ledger upkeep — `handoffs reconcile` judges every open handoff by whether its branches and PRs are still alive (git, no fetch; gh) and archives the dead ones as abandoned; unknown is never touched, nothing is deleted.
+    applet: handoffs
 
   - id: prm
     kind: skill
@@ -97,6 +115,12 @@ items:
     description: Czech commercial offer documents (cenova nabidka, functional specification, impact analysis) as editable DOCX in the issuer's house style.
     source: skills/press-offer
 
+  - id: press-email
+    kind: skill
+    status: experimental
+    description: Client and prospect emails as one Outlook-paste HTML per project — inline-styled house markup, project fact sheet, browser-verified links.
+    source: skills/press-email
+
 groups:
   - id: recommended
     description: Stable baseline suitable for every workstation and project.
@@ -109,6 +133,8 @@ groups:
       - codexsync
       - hotfix
       - hotfix-lane
+      - reclaim
+      - handoffs
       - prm
       - prc
       - merge
@@ -119,6 +145,7 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - press-email
       - ingressgen
       - cli-craft
 
@@ -129,6 +156,7 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - press-email
 
   - id: ai-git
     description: Reusable pull-request creation, review, and merge workflows.
@@ -145,6 +173,9 @@ groups:
       - perfrig
       - shrt
       - ingressgen
+      - reconcile
+      - reclaim
+      - handoffs
       - prm
       - prc
       - merge
@@ -152,4 +183,5 @@ groups:
       - press-pdf
       - press-logo
       - press-offer
+      - press-email
       - cli-craft

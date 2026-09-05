@@ -1,5 +1,5 @@
 // Package press is the determinism layer of the press skill family
-// (press-pdf, press-logo, press-offer).
+// (press-pdf, press-logo, press-offer, press-email).
 //
 // Every state mutation of ~/Exports/<project>/ — .press.conf.json, PRESS.md,
 // artifact notes — goes through this package so an agent never hand-edits

@@ -50,6 +50,31 @@ outside memory homes, exits 2 to refuse a write. It refuses two things:
   the tool and sending the caller to Bash or `memorylint new`. Team homes are
   unaffected; `memorylint fix` repairs already-drifted notes.
 
+## Handoff homes
+
+`~/.claude/handoffs/` is linted with its own schema instead of the memory one —
+the same `check` and `hook` entry points, dispatched by path. A handoff is
+`<project>/<slug>.md` or `<project>/<slug>/handoff.md`, live or under
+`<project>/archive/`; any other `.md` is a context file and gets only the
+secret scan (M011 — handoffs are machine-local and may name servers and people).
+
+```yaml
+name: <slug>              # H001 — must equal the slug
+description: <one line>
+status: open              # open · in-progress · done · abandoned
+created: YYYY-MM-DD
+feature: <project>/<taskId>  # vitrinka epic (or `none`); required from 2026-09-05, legacy exempt
+created-by: <session id>  # uuid, or `unknown` for pre-schema handoffs
+sessions: [<session id>]  # every session that worked it, created-by first
+```
+
+H002: `done`/`abandoned` belong under `archive/`, `open`/`in-progress` outside
+it. H003 (warning, never a write block): a handoff is at most 200 lines.
+
+The `feature` key is the ledger link: `<project>/<taskId>` (a vitrinka epic)
+or `none`; required for handoffs created from 2026-09-05 on, legacy ones
+exempt. Which open handoffs are still live is `handoffs reconcile` (`docs/handoffs.md`).
+
 ## Configuration
 
 `.memorylint.yaml` at the lint root:

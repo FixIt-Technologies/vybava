@@ -1,6 +1,6 @@
 # press — the document family
 
-`press` is the determinism layer behind three skills that produce client-facing
+`press` is the determinism layer behind four skills that produce client-facing
 documents:
 
 | Package | Kind | Produces |
@@ -9,6 +9,7 @@ documents:
 | `press-pdf` | skill | offer, documentation, and legal PDFs — themed, linted, byte-reproducible |
 | `press-logo` | skill | logo, brand mark, favicon, and the brand package around them |
 | `press-offer` | skill | Czech commercial offers and functional specifications as editable DOCX |
+| `press-email` | skill | client and prospect emails as Outlook-paste HTML, driven by a per-project `emails/FACTS.md` |
 
 Install the whole set:
 

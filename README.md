@@ -1,3 +1,4 @@
+| `handoffs` | applet | Handoff ledger upkeep — `handoffs reconcile` judges every open handoff by whether its branches and PRs are still alive and archives the dead ones; unknown is never touched. → [docs/handoffs.md](docs/handoffs.md) |
 # Výbava
 
 Výbava is FixIt Technologies' portable engineering environment: small tools,
@@ -13,10 +14,11 @@ every item installs independently.
 | `fontfreeze` | applet | Freeze variable webfonts at rendered axis positions and subset per language. |
 | `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |
 | `ingressgen` | applet | Render and drift-check complete default-deny Docker ingress policies from a manifest. |
+| `reconcile` | applet | Pull-based GitOps for the infra boxes — converge a VPS to its infra repo's merged main from a per-box manifest: HELD hotfixes, transactional nginx hooks, commit rollback, textfile metrics, mesh-only status page + estate hub. → [docs/reconcile.md](docs/reconcile.md) |
 | `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
 | `codexsync` | applet | Render `~/.claude` skills and commands into `~/.agents/skills`, the structure Codex discovers — nesting preserved, each command a `source-command` skill, duplicate discovery suppressed. → [docs/codexsync.md](docs/codexsync.md) |
 | `press` | applet | Deterministic state for the document family — project resolution, `~/Exports/<project>/` config and index, ARES lookups, shared doctrine. → [docs/press.md](docs/press.md) |
-| `press-pdf` / `press-logo` / `press-offer` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
+| `press-pdf` / `press-logo` / `press-offer` / `press-email` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX; Outlook-paste client emails. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
 
 Groups (`recommended`, `experimental`, `ai-git`, `press-family`, `everything`)
 are composable presets in the catalog — never code.

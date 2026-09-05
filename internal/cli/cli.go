@@ -42,6 +42,7 @@ type runtime struct {
 	catalog   catalog.Catalog
 	installer installer.Installer
 	json      bool
+	version   string
 	stdout    io.Writer
 	stderr    io.Writer
 	stdin     io.Reader
@@ -66,7 +67,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		return nil, err
 	}
 	rt := &runtime{
-		catalog: c, stdout: a.Stdout, stderr: a.Stderr, stdin: a.Stdin,
+		catalog: c, stdout: a.Stdout, stderr: a.Stderr, stdin: a.Stdin, version: a.Version,
 		installer: installer.Installer{Payload: assets.FS, Store: store},
 	}
 	if filepath.Base(invokedAs) == "memorylint" {
@@ -93,6 +94,15 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "codexsync" {
 		return rt.codexsyncApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "reconcile" {
+		return rt.reconcileApplet(), nil
+	}
+	if filepath.Base(invokedAs) == "reclaim" {
+		return rt.reclaimApplet(), nil
+	}
+	if filepath.Base(invokedAs) == "handoffs" {
+		return rt.handoffsApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -118,6 +128,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.ingressgenCommand("ingressgen"),
 		rt.hotfixCommand("hotfix"),
 		rt.codexsyncCommand("codexsync"),
+		rt.reconcileCommand("reconcile"),
+		rt.reclaimCommand("reclaim"),
+		rt.handoffsCommand("handoffs"),
 		rt.browseCommand(),
 	)
 	return root, nil

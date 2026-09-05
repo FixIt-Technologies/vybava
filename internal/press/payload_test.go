@@ -25,7 +25,7 @@ func pressPayloadFiles(t *testing.T) map[string]string {
 	t.Helper()
 	files := map[string]string{}
 	root := skillsRoot(t)
-	for _, skill := range []string{"press-pdf", "press-logo", "press-offer"} {
+	for _, skill := range []string{"press-pdf", "press-logo", "press-offer", "press-email"} {
 		err := filepath.WalkDir(filepath.Join(root, skill), func(path string, entry os.DirEntry, err error) error {
 			if err != nil || entry.IsDir() {
 				return err

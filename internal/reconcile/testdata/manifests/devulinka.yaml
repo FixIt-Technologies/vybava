@@ -1,0 +1,97 @@
+# reconcile.yaml — devulinka-infra (Devulinka 116.202.48.148 / 10.8.1.1).
+# Port of scripts/infra-reconcile/map-paths.sh: mappings are ordered `case`
+# arms, first match wins, `*` matches across `/` exactly like bash.
+#
+# V1 SCOPE (deliberately narrow — widen per-scope after the report-mode review):
+#   nginx/*.conf                    → /opt/nginx-proxy/conf.d/
+#   nginx/*-initial.conf            → skipped (ACME bootstrap only)
+#   nginx-proxy/00-default.conf     → /opt/nginx-proxy/conf.d/
+#   nginx-proxy/docker-compose.yml  → /opt/nginx-proxy/  (file only, roll manually)
+#   scripts/**                      → /opt/scripts/
+#   apps/<app>/**                   → /opt/apps/<app>/   (only if the live dir exists)
+# Skipped on purpose: apps/eve-ai-layer (its OWN reconciler owns that dir —
+# compose pins, per-lane .age secrets, litellm config), *.age + any .env, *.md,
+# apps/_shared, bin/tools/etc/systemd/cloud-init (root-owned / host-provisioning
+# — deliberate manual deploys).
+#
+# This box runs the reconciler as the `deploy` user. Destination trees owned
+# by root carry an `owner: root` hint so a refused write is classified as a
+# permission error naming both users instead of a bare "write failed".
+schema_version: 1
+repo: devulinka-infra
+host_label: devops-vps # prod hosts-registry label (eve monitor)
+# clone defaults to this file's directory (/home/deploy/infra/devulinka-infra
+# on the box — the clone path and `repo` MUST move together, the 08-18 rename
+# sweep silently killed every tick for a day)
+mode_file: ~/.config/infra-reconcile/mode
+state_dir: ~/.local/state/infra-reconcile
+lock_file: /tmp/infra-reconcile.lock
+apps_root: /opt/apps
+# metrics_file: /opt/monitoring/textfile/infra-reconcile.prom
+# vybava_version: v0.0.0  # pin the release the box installs
+
+# Apps whose compose changes may auto-`docker compose up -d` after converge.
+# NOTE gh-runner must NEVER be auto-rolled (compose must run from /opt/apps/
+# gh-runner with its live .env; a credential-less recreate crashloops).
+auto_roll_apps: []
+
+skip: ["*.age", ".env*", "*/.env*", "*.md"]
+
+mappings:
+  - match: ["apps/eve-ai-layer/*"] # owned by apps/eve-ai-layer/reconcile.sh
+    skip: true
+  - match: ["apps/_shared/*"]
+    skip: true
+  - match: ["nginx/*-initial.conf"] # bootstrap-only; conflicts after the TLS vhost exists
+    skip: true
+  - match: ["nginx/*.conf"]
+    strip: nginx/
+    dest: /opt/nginx-proxy/conf.d/{rest}
+    hook: nginx
+    owner: root
+  - match: [nginx-proxy/00-default.conf]
+    dest: /opt/nginx-proxy/conf.d/00-default.conf
+    hook: nginx
+    owner: root
+  - match: [nginx-proxy/docker-compose.yml]
+    dest: /opt/nginx-proxy/docker-compose.yml
+    hook: none
+    owner: root
+  - match: ["scripts/infra-reconcile/*"] # the tool itself runs from the clone
+    skip: true
+  - match: ["scripts/*"]
+    strip: scripts/
+    dest: /opt/scripts/{rest}
+    hook: none
+  - match: ["apps/*/*"]
+    strip: apps/
+    dest: /opt/apps/{rest}
+    hook: compose
+    require_live_dir: true
+    owner: root
+
+# nginx runs in the proxy container on this box.
+hooks:
+  nginx:
+    workdir: /opt/nginx-proxy
+    test: [docker, compose, exec, -T, nginx, nginx, -t]
+    reload: [docker, compose, exec, -T, nginx, nginx, -s, reload]
+  compose: [docker, compose, up, -d]
+
+alerts:
+  - type: telegram
+    lib: /opt/scripts/lib/telegram-notify.sh
+    channel: lovinka_monitoring
+  - type: eve-monitor
+    config: ~/.config/infra-reconcile/eve-webhook
+
+serve:
+  listen: 10.8.1.1:9470
+  # `serve --hub` polls these over the mesh and renders one estate page.
+  hosts:
+    - name: devulinka
+      url: http://10.8.1.1:9470
+    - name: produlinka
+      url: http://10.7.2.1:9470
+    - name: webulinka
+      url: http://10.7.3.1:9470

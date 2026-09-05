@@ -86,6 +86,11 @@ type entry struct {
 }
 
 var (
+	errMissingFrontmatter      = errors.New("missing YAML frontmatter")
+	errUnterminatedFrontmatter = errors.New("unterminated YAML frontmatter")
+)
+
+var (
 	markdownLinkPattern = regexp.MustCompile(`\[[^\]]+\]\(([^)]+\.md)(?:#[^)]+)?\)`)
 	wikiLinkPattern     = regexp.MustCompile(`\[\[([^\]|#]+)(?:[|#][^\]]*)?\]\]`)
 	emailPattern        = regexp.MustCompile(`(?i)\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b`)
@@ -176,7 +181,11 @@ func Lint(paths []string) (Report, error) {
 		if err != nil {
 			return Report{}, err
 		}
-		findings, files, err := lintRoot(absolute, config)
+		lint := lintRoot
+		if IsHandoffHome(absolute) {
+			lint = lintHandoffRoot
+		}
+		findings, files, err := lint(absolute, config)
 		if err != nil {
 			return Report{}, err
 		}
@@ -368,11 +377,11 @@ func parseFrontmatter(data []byte) (frontmatter, int, error) {
 	var result frontmatter
 	normalized := bytes.ReplaceAll(data, []byte("\r\n"), []byte("\n"))
 	if !bytes.HasPrefix(normalized, []byte("---\n")) {
-		return result, 1, errors.New("missing YAML frontmatter")
+		return result, 1, errMissingFrontmatter
 	}
 	end := bytes.Index(normalized[4:], []byte("\n---"))
 	if end < 0 {
-		return result, 1, errors.New("unterminated YAML frontmatter")
+		return result, 1, errUnterminatedFrontmatter
 	}
 	if err := yaml.Unmarshal(normalized[4:4+end], &result); err != nil {
 		return result, 1, fmt.Errorf("invalid YAML frontmatter: %w", err)
@@ -535,6 +544,26 @@ func identityFindings(entries []entry) []Finding {
 }
 
 func fixtureFindings(path string, data []byte, config Config) []Finding {
+	findings := secretFindings(path, data, config)
+	for _, location := range emailPattern.FindAllIndex(data, -1) {
+		value := string(data[location[0]:location[1]])
+		if !allowed(value, config.AllowedEmails, config.allowedRegex) {
+			findings = append(findings, finding("M007", SeverityError, path, lineAt(data, location[0]), "email is not allowlisted: %s", value))
+		}
+	}
+	for _, location := range ipv4Pattern.FindAllIndex(data, -1) {
+		value := string(data[location[0]:location[1]])
+		if net.ParseIP(value) == nil || allowed(value, config.AllowedIPs, config.allowedRegex) {
+			continue
+		}
+		findings = append(findings, finding("M008", SeverityError, path, lineAt(data, location[0]), "IP address is not allowlisted: %s", value))
+	}
+	return findings
+}
+
+// secretFindings is the token scan alone: handoffs are machine-local and name
+// servers and people freely, so only real credential material blocks there.
+func secretFindings(path string, data []byte, config Config) []Finding {
 	var findings []Finding
 	for _, secret := range secretPatterns {
 		for _, location := range secret.pattern.FindAllIndex(data, -1) {
@@ -548,19 +577,6 @@ func fixtureFindings(path string, data []byte, config Config) []Finding {
 			}
 			findings = append(findings, finding("M011", SeverityError, path, lineAt(data, location[0]), "%s is not allowed in memory: %s", secret.reason, redacted))
 		}
-	}
-	for _, location := range emailPattern.FindAllIndex(data, -1) {
-		value := string(data[location[0]:location[1]])
-		if !allowed(value, config.AllowedEmails, config.allowedRegex) {
-			findings = append(findings, finding("M007", SeverityError, path, lineAt(data, location[0]), "email is not allowlisted: %s", value))
-		}
-	}
-	for _, location := range ipv4Pattern.FindAllIndex(data, -1) {
-		value := string(data[location[0]:location[1]])
-		if net.ParseIP(value) == nil || allowed(value, config.AllowedIPs, config.allowedRegex) {
-			continue
-		}
-		findings = append(findings, finding("M008", SeverityError, path, lineAt(data, location[0]), "IP address is not allowlisted: %s", value))
 	}
 	return findings
 }
