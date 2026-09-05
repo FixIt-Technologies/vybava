@@ -1,3 +1,4 @@
+| `handoffs` | applet | Handoff ledger upkeep — `handoffs reconcile` judges every open handoff by whether its branches and PRs are still alive and archives the dead ones; unknown is never touched. → [docs/handoffs.md](docs/handoffs.md) |
 # Výbava
 
 Výbava is FixIt Technologies' portable engineering environment: small tools,
