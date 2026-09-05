@@ -182,7 +182,7 @@ func Lint(paths []string) (Report, error) {
 			return Report{}, err
 		}
 		lint := lintRoot
-		if isHandoffHome(absolute) {
+		if IsHandoffHome(absolute) {
 			lint = lintHandoffRoot
 		}
 		findings, files, err := lint(absolute, config)
