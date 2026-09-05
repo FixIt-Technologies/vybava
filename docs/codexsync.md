@@ -12,7 +12,13 @@ codexsync check           # exit 1 when the rendered tree has drifted
 ```
 
 Every verb takes `--json` and honours `--claude-home`, `--agents-home`,
-`--codex-home`, `--backup-root`.
+`--codex-home`, `--backup-root`. Relative overrides resolve against the current
+directory. The homes must not overlap, and the Claude home must exist.
+
+`plan --json` includes the rendered entries and the same change report as
+`apply --dry-run --json`, including config and manifest changes. Operational
+errors and drift produce `{"status":"error","error":"..."}` on stdout and a
+non-zero exit code. Successful applies report empty change lists as `[]`.
 
 ## What Codex actually supports
 
@@ -20,8 +26,9 @@ This is the part worth internalising, because most of the confusion around
 sharing skills between the two runtimes comes from assuming symmetry that does
 not exist.
 
-**Codex has no commands.** Claude Code's `~/.claude/commands/*.md` has no
-counterpart. Prompts (`~/.codex/prompts/*.md`) are a separate, flat mechanism —
+**Claude command files need conversion.** Claude Code's
+`~/.claude/commands/*.md` is not a Codex skill surface.
+Prompts (`~/.codex/prompts/*.md`) are a separate, flat mechanism —
 Codex does not derive slash commands from a `SKILL.md`
 ([openai/codex#13893](https://github.com/openai/codex/issues/13893)). A prompt
 entry that is a *directory*, or a dangling symlink, is invisible.
@@ -44,8 +51,8 @@ frontmatter. Discovery scopes, per
 are two skills under one bundle. Claude's nesting survives the crossing
 untouched.
 
-**Duplicate discovery is real.** Codex also scans legacy-compatible Claude
-paths, so the same skill can appear several times in the picker. The fix is
+**Duplicate discovery is real.** Codex versions with legacy-compatible Claude
+paths can show the same skill several times in the picker. The fix is
 `[[skills.config]]` entries in `~/.codex/config.toml` with `enabled = false` —
 hand-maintaining those is the part that rots, so codexsync owns them.
 
@@ -70,34 +77,60 @@ Commands flatten (`me/timesheet/backfill.md` →
 `source-command-me-timesheet-backfill`) because Codex has no command namespace
 to mirror, and a flat name is what gets typed and grepped.
 
+Collisions between flattened commands, or between a command and a copied skill,
+fail the plan with both source paths. Rename one source before applying.
+YAML descriptions support quoting, comments, and multiline values. Invocation
+opt-outs merge into existing `agents/openai.yaml` metadata without removing UI
+settings or tool dependencies.
+
 A directory under `~/.claude/skills` that holds no `SKILL.md` anywhere is not a
 skill and is skipped.
 
 ## Ownership and safety
 
 Copies are **full and generated** — never symlinks. Edit the Claude side and
-re-run; edits to the rendered tree are overwritten.
+re-run; edits to managed files in the rendered tree are backed up and overwritten.
+Source symlinked directories are materialized, including top-level bundles and
+repeated aliases. File permissions (including executable scripts) are preserved.
+Broken source links and unreadable files fail the plan rather than silently
+omitting their content.
 
 `~/.agents/skills/.codexsync.json` records exactly what the last run produced.
-Pruning only ever removes paths that manifest claims, so a skill you wrote by
-hand into `~/.agents/skills` survives every run untouched.
+Pruning removes only recorded files and then empty directories. Hand-written
+files added inside a generated directory survive its retirement too. Existing
+unmanaged files at a planned destination, and destination symlinks, cause an
+error: move them aside before applying. A corrupt or unsupported manifest also
+stops the apply before anything is changed.
 
-Anything about to be displaced — retired skills, unreadable prompt entries — is
-copied to `~/Backups/codexsync/<timestamp>/` first. Symlinks are preserved as
-`<name>.symlink` files recording their target, so a legacy layout stays
-reconstructible.
+Anything about to be displaced — edited or retired managed files, config,
+manifest, unreadable prompt entries — is copied to a unique
+`~/Backups/codexsync/backup-<random>/` directory first. Backup directories are
+private; file permissions and symlinks are preserved. Backup errors abort the
+apply. Each output file is replaced atomically; the complete run is not a
+filesystem transaction, so keep the source stable and run one apply at a time.
+
+Legacy prompt cleanup is separate from manifest ownership: visible directories,
+non-Markdown files, and dangling links directly under `~/.codex/prompts` are
+backed up and removed. Keep other personal files outside that legacy prompt tree.
 
 In `~/.codex/config.toml` only the region between the `codexsync managed`
 markers is rewritten. Every hand-written setting around it is left alone, and a
 second run replaces the block rather than stacking another copy.
+Malformed or unmatched markers cause an error, never truncation of the file.
+Legacy Codex skills are suppressed only when the relative path and `SKILL.md`
+content match; a different Codex variant remains enabled.
 
 Restart Codex after an apply — skills load at startup.
 
 ## Drift
 
-`codexsync check` exits non-zero listing every missing, changed or orphaned
-path. Because the render is deterministic, this is safe to run in CI or from a
+`codexsync check` exits non-zero for missing, changed or orphaned managed files,
+file-mode changes, config or manifest drift, and stale prompt entries.
+Because the render is deterministic, this is safe to run in CI or from a
 `doctor` sweep.
+
+Repository verification runs remotely with `devbox run verify`; the Go tests
+use temporary homes and never apply to the developer's actual agent homes.
 
 ## Known limitations
 

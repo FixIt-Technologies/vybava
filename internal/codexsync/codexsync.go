@@ -1,8 +1,8 @@
 // Package codexsync renders the Claude Code personal home (skills and
 // commands) into the structure Codex actually discovers.
 //
-// Codex has no notion of "commands", and its only extension surface is a skill:
-// a directory containing SKILL.md with `name` and `description`. The documented
+// Claude command files are converted to skills: directories containing
+// SKILL.md with `name` and `description`. The documented
 // user scope is $HOME/.agents/skills. So a Claude skill becomes a skill copied
 // verbatim (nesting preserved — Codex treats every directory holding a SKILL.md
 // as its own skill), and a Claude command becomes a generated
@@ -25,7 +25,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ManifestName is the record of what a previous run generated. Pruning only
@@ -69,6 +70,7 @@ type Plan struct {
 	StalePrompts []string `json:"stalePrompts"`
 
 	files map[string][]byte // slug/relpath -> rendered content
+	modes map[string]fs.FileMode
 }
 
 // manifest is the on-disk record of the previous run.
@@ -83,13 +85,17 @@ type Report struct {
 	Removed   []string `json:"removed"`
 	Backup    string   `json:"backup,omitempty"`
 	Config    string   `json:"config,omitempty"`
+	Manifest  bool     `json:"manifest"`
 	Unchanged int      `json:"unchanged"`
 }
 
 // BuildPlan reads the Claude home and renders the desired Codex-side tree.
 // It touches nothing.
 func BuildPlan(cfg Config) (*Plan, error) {
-	plan := &Plan{files: map[string][]byte{}}
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
+	}
+	plan := &Plan{files: map[string][]byte{}, modes: map[string]fs.FileMode{}}
 
 	skills, err := planSkills(cfg, plan)
 	if err != nil {
@@ -101,9 +107,20 @@ func BuildPlan(cfg Config) (*Plan, error) {
 	}
 	plan.Entries = append(skills, commands...)
 	sort.Slice(plan.Entries, func(i, j int) bool { return plan.Entries[i].Slug < plan.Entries[j].Slug })
+	for i := 1; i < len(plan.Entries); i++ {
+		if plan.Entries[i-1].Slug == plan.Entries[i].Slug {
+			return nil, fmt.Errorf("duplicate destination %q: %s and %s", plan.Entries[i].Slug, plan.Entries[i-1].Source, plan.Entries[i].Source)
+		}
+	}
 
-	plan.Suppress = collectSuppressions(cfg, plan.Entries)
-	plan.StalePrompts = collectStalePrompts(cfg)
+	plan.Suppress, err = collectSuppressions(cfg, plan)
+	if err != nil {
+		return nil, err
+	}
+	plan.StalePrompts, err = collectStalePrompts(cfg)
+	if err != nil {
+		return nil, err
+	}
 	return plan, nil
 }
 
@@ -123,10 +140,17 @@ func planSkills(cfg Config, plan *Plan) ([]Entry, error) {
 
 	var entries []Entry
 	for _, dir := range dirs {
-		if !dir.IsDir() || strings.HasPrefix(dir.Name(), ".") {
+		if strings.HasPrefix(dir.Name(), ".") {
 			continue
 		}
 		source := filepath.Join(root, dir.Name())
+		info, err := os.Stat(source)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			continue
+		}
 		hasSkill, err := containsSkillFile(source)
 		if err != nil {
 			return nil, err
@@ -136,23 +160,39 @@ func planSkills(cfg Config, plan *Plan) ([]Entry, error) {
 		}
 
 		entry := Entry{Slug: dir.Name(), Kind: "skill", Source: source, Files: map[string]string{}}
-		err = walkFiles(source, func(rel string, body []byte) error {
+		err = walkFiles(source, func(rel string, body []byte, mode fs.FileMode) error {
 			entry.Files[rel] = hashOf(body)
 			plan.files[path.Join(entry.Slug, rel)] = body
-
-			// A Claude skill opting out of model invocation must opt out on the
-			// Codex side too, via the sidecar Codex reads for that policy.
-			if filepath.Base(rel) == "SKILL.md" && frontmatterBool(body, "disable-model-invocation") {
-				sidecar := path.Join(path.Dir(rel), "agents", "openai.yaml")
-				sidecar = strings.TrimPrefix(sidecar, "./")
-				content := []byte("policy:\n  allow_implicit_invocation: false\n")
-				entry.Files[sidecar] = hashOf(content)
-				plan.files[path.Join(entry.Slug, sidecar)] = content
-			}
+			plan.modes[path.Join(entry.Slug, rel)] = mode.Perm()
 			return nil
 		})
 		if err != nil {
 			return nil, fmt.Errorf("walk %s: %w", source, err)
+		}
+		// Merge policy only after all source files have been copied, so a
+		// source sidecar cannot undo the Claude opt-out during traversal.
+		for rel := range entry.Files {
+			if path.Base(rel) != "SKILL.md" {
+				continue
+			}
+			meta, _, err := parseFrontmatter(plan.files[path.Join(entry.Slug, rel)])
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", source, rel, err)
+			}
+			if !meta.DisableModelInvocation {
+				continue
+			}
+			sidecar := path.Join(path.Dir(rel), "agents", "openai.yaml")
+			full := path.Join(entry.Slug, sidecar)
+			content, err := disableImplicitInvocation(plan.files[full])
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", source, sidecar, err)
+			}
+			entry.Files[sidecar] = hashOf(content)
+			plan.files[full] = content
+			if plan.modes[full] == 0 {
+				plan.modes[full] = 0o644
+			}
 		}
 		entries = append(entries, entry)
 	}
@@ -170,26 +210,19 @@ func planCommands(cfg Config, plan *Plan) ([]Entry, error) {
 	}
 
 	var entries []Entry
-	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || filepath.Ext(d.Name()) != ".md" || ignoredFile(d.Name()) {
+	err := walkFiles(root, func(rel string, body []byte, _ fs.FileMode) error {
+		if path.Ext(rel) != ".md" {
 			return nil
 		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		body, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
+		p := filepath.Join(root, filepath.FromSlash(rel))
 
 		command := strings.TrimSuffix(filepath.ToSlash(rel), ".md")
 		slug := "source-command-" + strings.ReplaceAll(command, "/", "-")
-		front, rest := splitFrontmatter(body)
-		description := frontmatterString(front, "description")
+		meta, rest, err := parseFrontmatter(body)
+		if err != nil {
+			return fmt.Errorf("%s: %w", p, err)
+		}
+		description := meta.Description
 		if description == "" {
 			description = deriveDescription(rest)
 		}
@@ -199,11 +232,13 @@ func planCommands(cfg Config, plan *Plan) ([]Entry, error) {
 			"SKILL.md": hashOf(skill),
 		}}
 		plan.files[path.Join(slug, "SKILL.md")] = skill
+		plan.modes[path.Join(slug, "SKILL.md")] = 0o644
 
-		if frontmatterBool(body, "disable-model-invocation") {
+		if meta.DisableModelInvocation {
 			content := []byte("policy:\n  allow_implicit_invocation: false\n")
 			entry.Files["agents/openai.yaml"] = hashOf(content)
 			plan.files[path.Join(slug, "agents", "openai.yaml")] = content
+			plan.modes[path.Join(slug, "agents", "openai.yaml")] = 0o644
 		}
 		entries = append(entries, entry)
 		return nil
@@ -232,9 +267,9 @@ func renderCommandSkill(slug, command, description string, body []byte) []byte {
 // collectSuppressions finds SKILL.md files Codex would discover outside the
 // AgentsHome that duplicate something we rendered, so config.toml can silence
 // them. Without this the same skill shows up several times in Codex's picker.
-func collectSuppressions(cfg Config, entries []Entry) []string {
+func collectSuppressions(cfg Config, plan *Plan) ([]string, error) {
 	rendered := map[string]bool{}
-	for _, entry := range entries {
+	for _, entry := range plan.Entries {
 		for rel := range entry.Files {
 			if filepath.Base(rel) == "SKILL.md" {
 				rendered[path.Join(entry.Slug, rel)] = true
@@ -247,26 +282,38 @@ func collectSuppressions(cfg Config, entries []Entry) []string {
 		filepath.Join(cfg.ClaudeHome, "skills"),
 		filepath.Join(cfg.CodexHome, "skills"),
 	} {
-		// An unreadable tree simply suppresses nothing.
-		_ = walkFiles(root, func(rel string, _ []byte) error {
+		if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		err := walkFiles(root, func(rel string, body []byte, _ fs.FileMode) error {
 			if path.Base(rel) == "SKILL.md" && rendered[rel] {
-				out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
+				// Same relative path alone does not establish a duplicate: a
+				// Codex-only variant may carry different instructions.
+				if root == filepath.Join(cfg.ClaudeHome, "skills") || bytes.Equal(body, plan.files[rel]) {
+					out = append(out, filepath.Join(root, filepath.FromSlash(rel)))
+				}
 			}
 			return nil
 		})
+		if err != nil {
+			return nil, fmt.Errorf("scan duplicates in %s: %w", root, err)
+		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // collectStalePrompts reports ~/.codex/prompts entries Codex cannot use: it
 // reads flat <name>.md files there, so a directory or a dangling symlink is
 // dead weight.
-func collectStalePrompts(cfg Config) []string {
+func collectStalePrompts(cfg Config) ([]string, error) {
 	root := filepath.Join(cfg.CodexHome, "prompts")
 	items, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	var out []string
 	for _, item := range items {
@@ -278,59 +325,87 @@ func collectStalePrompts(cfg Config) []string {
 			out = append(out, full)
 			continue
 		}
-		if _, err := os.Stat(full); err != nil {
+		info, err := os.Stat(full)
+		if errors.Is(err, fs.ErrNotExist) && item.Type()&os.ModeSymlink != 0 {
 			out = append(out, full) // dangling symlink
 			continue
 		}
-		if filepath.Ext(item.Name()) != ".md" {
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() || filepath.Ext(item.Name()) != ".md" {
 			out = append(out, full)
 		}
 	}
 	sort.Strings(out)
-	return out
+	return out, nil
 }
 
 // Check reports whether the rendered tree on disk already matches the plan.
-func Check(cfg Config, plan *Plan) error {
-	root := filepath.Join(cfg.AgentsHome, "skills")
-	var drift []string
+type DriftError struct {
+	Paths []string
+}
 
-	for rel, want := range plan.files {
-		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			drift = append(drift, "missing "+rel)
-			continue
-		}
-		if !bytes.Equal(got, want) {
-			drift = append(drift, "changed "+rel)
-		}
+func (e *DriftError) Error() string {
+	return fmt.Sprintf("codexsync drift (%d):\n  %s", len(e.Paths), strings.Join(e.Paths, "\n  "))
+}
+
+func (*DriftError) ExitCode() int { return 1 }
+
+func Check(cfg Config, plan *Plan) error {
+	report, err := Apply(cfg, plan, true)
+	if err != nil {
+		return err
 	}
-	for _, stale := range staleFromManifest(cfg, plan) {
+	var drift []string
+	for _, rel := range report.Written {
+		drift = append(drift, "missing or changed "+rel)
+	}
+	for _, stale := range report.Removed {
 		drift = append(drift, "orphaned "+stale)
+	}
+	if report.Config != "" {
+		drift = append(drift, "changed config.toml")
+	}
+	if report.Manifest {
+		drift = append(drift, "changed "+ManifestName)
 	}
 	if len(drift) == 0 {
 		return nil
 	}
 	sort.Strings(drift)
-	return fmt.Errorf("codexsync drift (%d):\n  %s", len(drift), strings.Join(drift, "\n  "))
+	return &DriftError{Paths: drift}
 }
 
 // Apply writes the plan. Anything it is about to displace is copied under
 // BackupRoot first, because these homes hold hand-written history.
 func Apply(cfg Config, plan *Plan, dryRun bool) (*Report, error) {
-	report := &Report{}
-	root := filepath.Join(cfg.AgentsHome, "skills")
-
-	stale := staleFromManifest(cfg, plan)
-	needsBackup := len(stale) > 0 || len(plan.StalePrompts) > 0
-
-	if needsBackup && !dryRun {
-		stamp, err := backup(cfg, append(append([]string{}, stale...), plan.StalePrompts...))
-		if err != nil {
-			return nil, err
-		}
-		report.Backup = stamp
+	if err := validateConfig(cfg); err != nil {
+		return nil, err
 	}
+	if plan == nil || plan.files == nil {
+		return nil, errors.New("apply requires a plan from BuildPlan")
+	}
+	report := &Report{Written: []string{}, Removed: []string{}}
+	root := filepath.Join(cfg.AgentsHome, "skills")
+	previous, err := readManifest(cfg)
+	if err != nil {
+		return nil, err
+	}
+	owned := map[string]bool{}
+	for _, entry := range previous.Entries {
+		for rel := range entry.Files {
+			owned[path.Join(entry.Slug, rel)] = true
+		}
+	}
+	stale := staleFromManifest(previous, plan)
+	var preserve []string
+	type pendingWrite struct {
+		path string
+		body []byte
+		mode fs.FileMode
+	}
+	var writes []pendingWrite
 
 	rels := make([]string, 0, len(plan.files))
 	for rel := range plan.files {
@@ -339,52 +414,113 @@ func Apply(cfg Config, plan *Plan, dryRun bool) (*Report, error) {
 	sort.Strings(rels)
 
 	for _, rel := range rels {
+		if err := validateTarget(root, rel); err != nil {
+			return nil, err
+		}
 		target := filepath.Join(root, filepath.FromSlash(rel))
-		if existing, err := os.ReadFile(target); err == nil && bytes.Equal(existing, plan.files[rel]) {
+		existing, mode, exists, err := readRegular(target)
+		if err != nil {
+			return nil, err
+		}
+		if exists && !owned[rel] {
+			return nil, fmt.Errorf("refusing to overwrite unmanaged file %s; move it aside before applying", target)
+		}
+		if exists && bytes.Equal(existing, plan.files[rel]) && mode == plan.modes[rel] {
 			report.Unchanged++
 			continue
 		}
 		report.Written = append(report.Written, rel)
-		if dryRun {
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(target, plan.files[rel], 0o644); err != nil {
-			return nil, err
+		writes = append(writes, pendingWrite{target, plan.files[rel], plan.modes[rel]})
+		if exists {
+			preserve = append(preserve, target)
 		}
 	}
 
 	for _, orphan := range stale {
-		report.Removed = append(report.Removed, orphan)
-		if dryRun {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(root, filepath.FromSlash(orphan))); err != nil {
+		if err := validateTarget(root, orphan); err != nil {
 			return nil, err
 		}
+		target := filepath.Join(root, filepath.FromSlash(orphan))
+		if _, _, exists, err := readRegular(target); err != nil {
+			return nil, err
+		} else if !exists {
+			continue
+		}
+		report.Removed = append(report.Removed, orphan)
+		preserve = append(preserve, target)
 	}
 	for _, orphan := range plan.StalePrompts {
-		report.Removed = append(report.Removed, orphan)
-		if dryRun {
-			continue
+		if filepath.Dir(orphan) != filepath.Join(cfg.CodexHome, "prompts") {
+			return nil, fmt.Errorf("unexpected prompt path %s", orphan)
 		}
-		if err := os.RemoveAll(orphan); err != nil {
+		if err := validateTarget(cfg.CodexHome, "prompts"); err != nil {
 			return nil, err
 		}
+		report.Removed = append(report.Removed, orphan)
+		preserve = append(preserve, orphan)
 	}
 
-	if !dryRun {
-		if err := writeManifest(cfg, plan); err != nil {
+	manifestBody, err := json.MarshalIndent(manifest{Version: 1, Entries: plan.Entries}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	manifestBody = append(manifestBody, '\n')
+	configBody, err := renderConfigBlock(cfg, plan)
+	if err != nil {
+		return nil, err
+	}
+	for _, state := range []pendingWrite{
+		{filepath.Join(root, ManifestName), manifestBody, 0o644},
+		{filepath.Join(cfg.CodexHome, "config.toml"), configBody, 0o600},
+	} {
+		if err := validateTarget(filepath.Dir(state.path), filepath.Base(state.path)); err != nil {
 			return nil, err
 		}
-		changed, err := writeConfigBlock(cfg, plan)
+		existing, mode, exists, err := readRegular(state.path)
 		if err != nil {
 			return nil, err
 		}
-		if changed {
-			report.Config = filepath.Join(cfg.CodexHome, "config.toml")
+		if exists && bytes.Equal(existing, state.body) {
+			continue
+		}
+		if exists {
+			preserve = append(preserve, state.path)
+			state.mode = mode
+		}
+		writes = append(writes, state)
+		if filepath.Base(state.path) == ManifestName {
+			report.Manifest = true
+		} else {
+			report.Config = state.path
+		}
+	}
+	if dryRun {
+		return report, nil
+	}
+	// Every read and ownership/config check completes before the first write.
+	// A failed backup must stop the operation before any original is changed.
+	report.Backup, err = backup(cfg, preserve)
+	if err != nil {
+		return nil, err
+	}
+	for _, orphan := range report.Removed {
+		if filepath.IsAbs(orphan) {
+			if err := os.RemoveAll(orphan); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		target := filepath.Join(root, filepath.FromSlash(orphan))
+		if err := os.Remove(target); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		if err := removeEmptyParents(root, filepath.Dir(target)); err != nil {
+			return nil, err
+		}
+	}
+	for _, write := range writes {
+		if err := atomicWrite(write.path, write.body, write.mode); err != nil {
+			return nil, err
 		}
 	}
 	return report, nil
@@ -392,26 +528,13 @@ func Apply(cfg Config, plan *Plan, dryRun bool) (*Report, error) {
 
 // staleFromManifest returns entry-relative paths the previous run generated
 // that the current plan no longer wants.
-func staleFromManifest(cfg Config, plan *Plan) []string {
-	previous, err := readManifest(cfg)
-	if err != nil {
-		return nil
-	}
+func staleFromManifest(previous *manifest, plan *Plan) []string {
 	wanted := map[string]bool{}
 	for rel := range plan.files {
 		wanted[rel] = true
 	}
-	slugs := map[string]bool{}
-	for _, entry := range plan.Entries {
-		slugs[entry.Slug] = true
-	}
-
 	var out []string
 	for _, entry := range previous.Entries {
-		if !slugs[entry.Slug] {
-			out = append(out, entry.Slug) // whole entry retired
-			continue
-		}
 		for rel := range entry.Files {
 			full := path.Join(entry.Slug, rel)
 			if !wanted[full] {
@@ -424,7 +547,13 @@ func staleFromManifest(cfg Config, plan *Plan) []string {
 }
 
 func readManifest(cfg Config) (*manifest, error) {
+	if err := validateTarget(filepath.Join(cfg.AgentsHome, "skills"), ManifestName); err != nil {
+		return nil, err
+	}
 	body, err := os.ReadFile(filepath.Join(cfg.AgentsHome, "skills", ManifestName))
+	if errors.Is(err, fs.ErrNotExist) {
+		return &manifest{Version: 1}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -432,28 +561,31 @@ func readManifest(cfg Config) (*manifest, error) {
 	if err := json.Unmarshal(body, &m); err != nil {
 		return nil, err
 	}
+	if m.Version != 1 {
+		return nil, fmt.Errorf("unsupported codexsync manifest version %d", m.Version)
+	}
+	seen := map[string]bool{}
+	for _, entry := range m.Entries {
+		if !validRelative(entry.Slug) || strings.Contains(entry.Slug, "/") || entry.Slug == ManifestName || seen[entry.Slug] {
+			return nil, fmt.Errorf("invalid or duplicate manifest slug %q", entry.Slug)
+		}
+		seen[entry.Slug] = true
+		for rel := range entry.Files {
+			if !validRelative(rel) {
+				return nil, fmt.Errorf("invalid manifest file %q", rel)
+			}
+		}
+	}
 	return &m, nil
 }
 
-func writeManifest(cfg Config, plan *Plan) error {
-	body, err := json.MarshalIndent(manifest{Version: 1, Entries: plan.Entries}, "", "  ")
-	if err != nil {
-		return err
-	}
-	target := filepath.Join(cfg.AgentsHome, "skills", ManifestName)
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return err
-	}
-	return os.WriteFile(target, append(body, '\n'), 0o644)
-}
-
-// writeConfigBlock replaces the managed region of config.toml with the current
+// renderConfigBlock replaces the managed region of config.toml with the current
 // suppression set, leaving every hand-written setting around it untouched.
-func writeConfigBlock(cfg Config, plan *Plan) (bool, error) {
+func renderConfigBlock(cfg Config, plan *Plan) ([]byte, error) {
 	target := filepath.Join(cfg.CodexHome, "config.toml")
 	existing, err := os.ReadFile(target)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
+		return nil, err
 	}
 
 	var block bytes.Buffer
@@ -462,41 +594,48 @@ func writeConfigBlock(cfg Config, plan *Plan) (bool, error) {
 	block.WriteString("# Regenerate with: codexsync apply\n")
 	for _, p := range plan.Suppress {
 		block.WriteString("\n[[skills.config]]\n")
-		fmt.Fprintf(&block, "path = %q\n", p)
+		quoted, err := json.Marshal(p)
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(&block, "path = %s\n", quoted)
 		block.WriteString("enabled = false\n")
 	}
 	block.WriteString(managedEnd + "\n")
 
-	updated := replaceManagedBlock(existing, block.Bytes())
-	if bytes.Equal(existing, updated) {
-		return false, nil
-	}
-	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return false, err
-	}
-	return true, os.WriteFile(target, updated, 0o644)
+	return replaceManagedBlock(existing, block.Bytes())
 }
 
-func replaceManagedBlock(existing, block []byte) []byte {
+func replaceManagedBlock(existing, block []byte) ([]byte, error) {
+	starts, ends := bytes.Count(existing, []byte(managedBegin)), bytes.Count(existing, []byte(managedEnd))
+	if starts != ends || starts > 1 {
+		return nil, errors.New("config.toml has malformed codexsync markers; repair the managed block before applying")
+	}
 	start := bytes.Index(existing, []byte(managedBegin))
 	if start < 0 {
-		trimmed := bytes.TrimRight(existing, "\n")
-		if len(trimmed) == 0 {
-			return block
+		if len(existing) == 0 {
+			return block, nil
 		}
-		return append(append(trimmed, []byte("\n\n")...), block...)
+		return append(append(append([]byte{}, existing...), []byte("\n\n")...), block...), nil
 	}
 	end := bytes.Index(existing[start:], []byte(managedEnd))
 	if end < 0 {
-		return append(append([]byte{}, existing[:start]...), block...)
+		return nil, errors.New("config.toml codexsync end marker precedes its begin marker")
 	}
-	end += start + len(managedEnd)
-	for end < len(existing) && existing[end] == '\n' {
+	end += start
+	for markerStart, marker := range map[int]string{start: managedBegin, end: managedEnd} {
+		after := markerStart + len(marker)
+		if (markerStart > 0 && existing[markerStart-1] != '\n') || (after < len(existing) && existing[after] != '\n') {
+			return nil, errors.New("config.toml codexsync markers must occupy complete lines")
+		}
+	}
+	end += len(managedEnd)
+	if end < len(existing) && existing[end] == '\n' {
 		end++
 	}
 	out := append([]byte{}, existing[:start]...)
 	out = append(out, block...)
-	return append(out, existing[end:]...)
+	return append(out, existing[end:]...), nil
 }
 
 // backup copies paths under BackupRoot before they are removed. Backups live
@@ -505,7 +644,14 @@ func backup(cfg Config, paths []string) (string, error) {
 	if len(paths) == 0 {
 		return "", nil
 	}
-	dest := filepath.Join(cfg.BackupRoot, "codexsync", stampName())
+	backupRoot := filepath.Join(cfg.BackupRoot, "codexsync")
+	if err := os.MkdirAll(backupRoot, 0o700); err != nil {
+		return "", err
+	}
+	dest, err := os.MkdirTemp(backupRoot, "backup-")
+	if err != nil {
+		return "", err
+	}
 	skillsRoot := filepath.Join(cfg.AgentsHome, "skills")
 
 	for _, p := range paths {
@@ -526,8 +672,11 @@ func backup(cfg Config, paths []string) (string, error) {
 
 func copyTree(source, dest string) error {
 	info, err := os.Lstat(source)
-	if err != nil {
+	if errors.Is(err, fs.ErrNotExist) {
 		return nil // nothing to preserve
+	}
+	if err != nil {
+		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		target, err := os.Readlink(source)
@@ -537,9 +686,12 @@ func copyTree(source, dest string) error {
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(dest+".symlink", []byte(target+"\n"), 0o644)
+		return os.Symlink(target, dest)
 	}
 	if !info.IsDir() {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("cannot back up non-regular file %s", source)
+		}
 		body, err := os.ReadFile(source)
 		if err != nil {
 			return err
@@ -547,23 +699,26 @@ func copyTree(source, dest string) error {
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(dest, body, 0o644)
+		return os.WriteFile(dest, body, info.Mode().Perm())
 	}
-	return filepath.WalkDir(source, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // best-effort insurance copy
-		}
-		rel, err := filepath.Rel(source, p)
-		if err != nil {
+	if err := os.MkdirAll(dest, info.Mode().Perm()); err != nil {
+		return err
+	}
+	children, err := os.ReadDir(source)
+	if err != nil {
+		return err
+	}
+	for _, child := range children {
+		if err := copyTree(filepath.Join(source, child.Name()), filepath.Join(dest, child.Name())); err != nil {
 			return err
 		}
-		return copyTree(p, filepath.Join(dest, rel))
-	})
+	}
+	return nil
 }
 
 func containsSkillFile(root string) (bool, error) {
 	found := false
-	err := walkFiles(root, func(rel string, _ []byte) error {
+	err := walkFiles(root, func(rel string, _ []byte, _ fs.FileMode) error {
 		if path.Base(rel) == "SKILL.md" {
 			found = true
 		}
@@ -576,19 +731,20 @@ func containsSkillFile(root string) (bool, error) {
 // directories — a skill home is full of them, and Codex follows them too, so a
 // copy that stopped at the link would ship an empty directory. Cycles are cut
 // by tracking resolved directories already visited.
-func walkFiles(root string, visit func(rel string, body []byte) error) error {
+func walkFiles(root string, visit func(rel string, body []byte, mode fs.FileMode) error) error {
 	seen := map[string]bool{}
 
 	var walk func(dir, prefix string) error
 	walk = func(dir, prefix string) error {
 		resolved, err := filepath.EvalSymlinks(dir)
 		if err != nil {
-			return nil // a dangling link contributes nothing
+			return err
 		}
 		if seen[resolved] {
 			return nil
 		}
 		seen[resolved] = true
+		defer delete(seen, resolved) // repeated aliases are not cycles
 
 		items, err := os.ReadDir(dir)
 		if err != nil {
@@ -607,7 +763,7 @@ func walkFiles(root string, visit func(rel string, body []byte) error) error {
 			full := filepath.Join(dir, name)
 			info, err := os.Stat(full) // Stat, not Lstat: resolve the link
 			if err != nil {
-				continue
+				return err
 			}
 			rel := path.Join(prefix, name)
 			if info.IsDir() {
@@ -616,11 +772,14 @@ func walkFiles(root string, visit func(rel string, body []byte) error) error {
 				}
 				continue
 			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("unsupported source file %s (%s)", full, info.Mode())
+			}
 			body, err := os.ReadFile(full)
 			if err != nil {
 				return err
 			}
-			if err := visit(rel, body); err != nil {
+			if err := visit(rel, body, info.Mode()); err != nil {
 				return err
 			}
 		}
@@ -638,38 +797,64 @@ func hashOf(body []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// splitFrontmatter returns the YAML frontmatter block and the body after it.
-func splitFrontmatter(body []byte) (front, rest []byte) {
-	if !bytes.HasPrefix(body, []byte("---\n")) {
-		return nil, body
-	}
-	end := bytes.Index(body[4:], []byte("\n---"))
-	if end < 0 {
-		return nil, body
-	}
-	front = body[4 : 4+end]
-	rest = body[4+end:]
-	if idx := bytes.IndexByte(rest, '\n'); idx >= 0 {
-		rest = rest[idx+1:]
-	}
-	return front, bytes.TrimLeft(rest, "\n")
+type frontmatter struct {
+	Description            string `yaml:"description"`
+	DisableModelInvocation bool   `yaml:"disable-model-invocation"`
 }
 
-func frontmatterString(front []byte, key string) string {
-	for _, line := range strings.Split(string(front), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, key+":") {
-			continue
+func parseFrontmatter(body []byte) (frontmatter, []byte, error) {
+	var meta frontmatter
+	normalized := bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
+	if !bytes.HasPrefix(normalized, []byte("---\n")) {
+		return meta, body, nil
+	}
+	offset := 4
+	for _, line := range bytes.SplitAfter(normalized[4:], []byte("\n")) {
+		if bytes.Equal(bytes.TrimSpace(line), []byte("---")) {
+			err := yaml.Unmarshal(normalized[4:offset], &meta)
+			return meta, bytes.TrimLeft(normalized[offset+len(line):], "\n"), err
 		}
-		value := strings.TrimSpace(strings.TrimPrefix(trimmed, key+":"))
-		return strings.Trim(value, `"'`)
+		offset += len(line)
 	}
-	return ""
+	return meta, nil, errors.New("unterminated YAML frontmatter")
 }
 
-func frontmatterBool(body []byte, key string) bool {
-	front, _ := splitFrontmatter(body)
-	return frontmatterString(front, key) == "true"
+func disableImplicitInvocation(body []byte) ([]byte, error) {
+	var doc yaml.Node
+	if len(body) == 0 {
+		body = []byte("{}\n")
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, errors.New("openai.yaml must be a mapping")
+	}
+	root := doc.Content[0]
+	policy := mappingValue(root, "policy")
+	if policy == nil {
+		policy = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "policy"}, policy)
+	}
+	if policy.Kind != yaml.MappingNode {
+		return nil, errors.New("openai.yaml policy must be a mapping")
+	}
+	value := mappingValue(policy, "allow_implicit_invocation")
+	if value == nil {
+		value = &yaml.Node{Kind: yaml.ScalarNode}
+		policy.Content = append(policy.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "allow_implicit_invocation"}, value)
+	}
+	value.Kind, value.Tag, value.Value = yaml.ScalarNode, "!!bool", "false"
+	return yaml.Marshal(&doc)
+}
+
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
+		}
+	}
+	return nil
 }
 
 // deriveDescription falls back to the first prose line when a command carries
@@ -680,8 +865,8 @@ func deriveDescription(body []byte) string {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "---") {
 			continue
 		}
-		if len(trimmed) > 300 {
-			trimmed = trimmed[:300]
+		if runes := []rune(trimmed); len(runes) > 300 {
+			trimmed = string(runes[:300])
 		}
 		return trimmed
 	}
@@ -691,10 +876,6 @@ func deriveDescription(body []byte) string {
 // yamlScalar quotes a description so a colon or a leading dash cannot break the
 // frontmatter Codex parses.
 func yamlScalar(value string) string {
-	value = strings.ReplaceAll(value, "\n", " ")
-	return `"` + strings.ReplaceAll(strings.ReplaceAll(value, `\`, `\\`), `"`, `\"`) + `"`
-}
-
-func stampName() string {
-	return time.Now().UTC().Format("20060102-150405")
+	quoted, _ := json.Marshal(strings.Join(strings.Fields(value), " "))
+	return string(quoted)
 }

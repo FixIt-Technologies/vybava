@@ -952,20 +952,27 @@ func codexsyncConfig(claudeHome, agentsHome, codexHome, backupRoot string) (code
 		}
 		return filepath.Join(home, fallback)
 	}
-	return codexsync.Config{
+	cfg := codexsync.Config{
 		ClaudeHome: pick(claudeHome, ".claude"),
 		AgentsHome: pick(agentsHome, ".agents"),
 		CodexHome:  pick(codexHome, ".codex"),
 		BackupRoot: pick(backupRoot, "Backups"),
-	}, nil
+	}
+	for _, field := range []*string{&cfg.ClaudeHome, &cfg.AgentsHome, &cfg.CodexHome, &cfg.BackupRoot} {
+		*field, err = filepath.Abs(*field)
+		if err != nil {
+			return codexsync.Config{}, err
+		}
+	}
+	return cfg, nil
 }
 
 func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
 	command := &cobra.Command{
 		Use:   use,
 		Short: "Render Claude skills and commands into the structure Codex discovers",
-		Long: "Codex has no commands, and its only extension surface is a skill directory\n" +
-			"holding SKILL.md. codexsync renders ~/.claude/skills and ~/.claude/commands\n" +
+		Long: "Codex does not load Claude command files as skills. codexsync renders\n" +
+			"~/.claude/skills and ~/.claude/commands\n" +
 			"into ~/.agents/skills — Codex's documented user scope — deterministically:\n" +
 			"skills keep their nesting, each command becomes a source-command-<slug> skill,\n" +
 			"and a disable-model-invocation opt-out crosses over as the Codex policy\n" +
@@ -982,11 +989,13 @@ func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
 	command.PersistentFlags().StringVar(&backupRoot, "backup-root", "", "where displaced files are copied (default ~/Backups)")
 
 	type planResult struct {
-		Status       string   `json:"status"`
-		Skills       int      `json:"skills"`
-		Commands     int      `json:"commands"`
-		Suppress     []string `json:"suppress"`
-		StalePrompts []string `json:"stalePrompts"`
+		Status       string            `json:"status"`
+		Skills       int               `json:"skills"`
+		Commands     int               `json:"commands"`
+		Suppress     []string          `json:"suppress"`
+		StalePrompts []string          `json:"stalePrompts"`
+		Entries      []codexsync.Entry `json:"entries"`
+		Changes      *codexsync.Report `json:"changes"`
 	}
 
 	plan := &cobra.Command{
@@ -1002,6 +1011,10 @@ func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			changes, err := codexsync.Apply(cfg, p, true)
+			if err != nil {
+				return err
+			}
 			skills, commands := 0, 0
 			for _, entry := range p.Entries {
 				if entry.Kind == "command" {
@@ -1014,11 +1027,17 @@ func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
 				return writeJSON(rt.stdout, planResult{
 					Status: "ok", Skills: skills, Commands: commands,
 					Suppress: p.Suppress, StalePrompts: p.StalePrompts,
+					Entries: p.Entries, Changes: changes,
 				})
 			}
 			_, err = fmt.Fprintf(rt.stdout,
 				"%d skills, %d commands -> %s\n%d duplicate paths suppressed, %d unreadable prompt entries\n",
 				skills, commands, filepath.Join(cfg.AgentsHome, "skills"), len(p.Suppress), len(p.StalePrompts))
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(rt.stdout, "would write %d, remove %d, unchanged %d; config changed %t, manifest changed %t\n",
+				len(changes.Written), len(changes.Removed), changes.Unchanged, changes.Config != "", changes.Manifest)
 			return err
 		},
 	}
@@ -1043,8 +1062,8 @@ func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
 			if rt.json {
 				return writeJSON(rt.stdout, report)
 			}
-			_, err = fmt.Fprintf(rt.stdout, "written %d, removed %d, unchanged %d\n",
-				len(report.Written), len(report.Removed), report.Unchanged)
+			_, err = fmt.Fprintf(rt.stdout, "written %d, removed %d, unchanged %d; config changed %t, manifest changed %t\n",
+				len(report.Written), len(report.Removed), report.Unchanged, report.Config != "", report.Manifest)
 			if err != nil || report.Backup == "" {
 				return err
 			}
@@ -1079,5 +1098,16 @@ func (rt *runtime) codexsyncCommand(use string) *cobra.Command {
 	}
 
 	command.AddCommand(plan, apply, check)
+	// Drift and operational errors must remain machine-readable on stdout.
+	for _, child := range command.Commands() {
+		run := child.RunE
+		child.RunE = func(cmd *cobra.Command, args []string) error {
+			err := run(cmd, args)
+			if err != nil && rt.json {
+				return errors.Join(err, writeJSON(rt.stdout, map[string]string{"status": "error", "error": err.Error()}))
+			}
+			return err
+		}
+	}
 	return command
 }

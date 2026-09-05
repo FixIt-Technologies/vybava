@@ -1,10 +1,13 @@
 package codexsync
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func newHome(t *testing.T) Config {
@@ -362,5 +365,319 @@ func TestSymlinkCycleTerminates(t *testing.T) {
 
 	if !strings.Contains(read(t, filepath.Join(cfg.AgentsHome, "skills", "loop", "SKILL.md")), "name: loop") {
 		t.Fatal("skill missing after cycle walk")
+	}
+}
+
+func TestTopLevelSkillLinksAndRepeatedAliases(t *testing.T) {
+	cfg := newHome(t)
+	source := filepath.Join(t.TempDir(), "shared")
+	write(t, filepath.Join(source, "SKILL.md"), "---\nname: shared\ndescription: Shared\n---\nbody\n")
+	for _, name := range []string{"first", "second"} {
+		if err := os.Symlink(source, filepath.Join(cfg.ClaudeHome, "skills", name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report := applied(t, cfg)
+	if len(report.Written) != 2 {
+		t.Fatalf("linked skills skipped: %+v", report)
+	}
+	plan, err := BuildPlan(cfg)
+	if err != nil || len(plan.Suppress) != 2 {
+		t.Fatalf("aliases missing from suppressions: %+v, %v", plan, err)
+	}
+}
+
+func TestExecutableModesSurviveAndDrift(t *testing.T) {
+	cfg := newHome(t)
+	write(t, filepath.Join(cfg.ClaudeHome, "skills", "runner", "SKILL.md"), "Run the script.\n")
+	script := filepath.Join(cfg.ClaudeHome, "skills", "runner", "scripts", "run.sh")
+	write(t, script, "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(script, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	applied(t, cfg)
+	target := filepath.Join(cfg.AgentsHome, "skills", "runner", "scripts", "run.sh")
+	info, err := os.Stat(target)
+	if err != nil || info.Mode().Perm() != 0o750 {
+		t.Fatalf("executable mode lost: %v, %v", info, err)
+	}
+	if err := os.Chmod(target, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildPlan(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Check(cfg, plan); err == nil {
+		t.Fatal("mode-only drift passed")
+	}
+	if report := applied(t, cfg); len(report.Written) != 1 || report.Backup == "" {
+		t.Fatalf("mode drift not repaired with backup: %+v", report)
+	}
+}
+
+func TestInvocationPolicyMergesExistingMetadata(t *testing.T) {
+	cfg := newHome(t)
+	dir := filepath.Join(cfg.ClaudeHome, "skills", "manual")
+	write(t, filepath.Join(dir, "SKILL.md"), "---\ndisable-model-invocation: true # explicit only\n---\nInstructions.\n")
+	write(t, filepath.Join(dir, "agents", "openai.yaml"), "interface:\n  display_name: Manual\npolicy:\n  allow_implicit_invocation: true\ndependencies:\n  tools: []\n")
+	applied(t, cfg)
+	var sidecar struct {
+		Interface struct {
+			DisplayName string `yaml:"display_name"`
+		}
+		Policy struct {
+			Allow bool `yaml:"allow_implicit_invocation"`
+		}
+		Dependencies yaml.Node
+	}
+	got := read(t, filepath.Join(cfg.AgentsHome, "skills", "manual", "agents", "openai.yaml"))
+	if err := yaml.Unmarshal([]byte(got), &sidecar); err != nil {
+		t.Fatal(err)
+	}
+	if sidecar.Policy.Allow || sidecar.Interface.DisplayName != "Manual" || sidecar.Dependencies.Kind != yaml.MappingNode {
+		t.Fatalf("policy or metadata lost: %s", got)
+	}
+}
+
+func TestCommandFrontmatterUsesYAMLAndConsumesDelimiter(t *testing.T) {
+	for _, description := range []string{"description: >\n  Open a PR:\n  review it", "description: 'Open a PR: review it' # comment"} {
+		t.Run(description, func(t *testing.T) {
+			cfg := newHome(t)
+			body := "---\n" + description + "\ndisable-model-invocation: true\n---\nCommand body.\n"
+			write(t, filepath.Join(cfg.ClaudeHome, "commands", "pr.md"), strings.ReplaceAll(body, "\n", "\r\n"))
+			applied(t, cfg)
+			got := read(t, filepath.Join(cfg.AgentsHome, "skills", "source-command-pr", "SKILL.md"))
+			if !strings.Contains(got, `description: "Open a PR: review it"`) || !strings.HasSuffix(got, "---\n\nCommand body.\n") {
+				t.Fatalf("frontmatter parsed incorrectly: %s", got)
+			}
+		})
+	}
+}
+
+func TestDestinationCollisionsFailBeforeApply(t *testing.T) {
+	for _, skillCollision := range []bool{false, true} {
+		cfg := newHome(t)
+		write(t, filepath.Join(cfg.ClaudeHome, "commands", "a", "b.md"), "Nested command.\n")
+		if skillCollision {
+			write(t, filepath.Join(cfg.ClaudeHome, "skills", "source-command-a-b", "SKILL.md"), "Existing skill.\n")
+		} else {
+			write(t, filepath.Join(cfg.ClaudeHome, "commands", "a-b.md"), "Flat command.\n")
+		}
+		if _, err := BuildPlan(cfg); err == nil || !strings.Contains(err.Error(), "duplicate destination") {
+			t.Fatalf("collision accepted: %v", err)
+		}
+	}
+}
+
+func TestUnmanagedCollisionIsPreserved(t *testing.T) {
+	cfg := newHome(t)
+	write(t, filepath.Join(cfg.ClaudeHome, "skills", "sync", "SKILL.md"), "Generated.\n")
+	target := filepath.Join(cfg.AgentsHome, "skills", "sync", "SKILL.md")
+	write(t, target, "Handwritten.\n")
+	plan, err := BuildPlan(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(cfg, plan, false); err == nil || !strings.Contains(err.Error(), "unmanaged") {
+		t.Fatalf("unmanaged collision not refused: %v", err)
+	}
+	if read(t, target) != "Handwritten.\n" {
+		t.Fatal("handwritten skill overwritten")
+	}
+}
+
+func TestRetirementPreservesUnmanagedFilesInsideEntry(t *testing.T) {
+	cfg := newHome(t)
+	source := filepath.Join(cfg.ClaudeHome, "skills", "retired", "SKILL.md")
+	write(t, source, "Generated.\n")
+	applied(t, cfg)
+	manual := filepath.Join(cfg.AgentsHome, "skills", "retired", "notes.md")
+	write(t, manual, "My notes.\n")
+	if err := os.Remove(source); err != nil {
+		t.Fatal(err)
+	}
+	applied(t, cfg)
+	if read(t, manual) != "My notes.\n" {
+		t.Fatal("retirement removed unmanaged contents")
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(manual), "SKILL.md")); !os.IsNotExist(err) {
+		t.Fatal("retired managed file survived")
+	}
+}
+
+func TestOverwrittenFilesHaveDistinctRecoverableBackups(t *testing.T) {
+	cfg := newHome(t)
+	source := filepath.Join(cfg.ClaudeHome, "skills", "sync", "SKILL.md")
+	write(t, source, "Original.\n")
+	applied(t, cfg)
+	write(t, source, "Second.\n")
+	first := applied(t, cfg)
+	write(t, source, "Third.\n")
+	second := applied(t, cfg)
+	if first.Backup == "" || first.Backup == second.Backup {
+		t.Fatalf("backups reused: %q %q", first.Backup, second.Backup)
+	}
+	for dir, want := range map[string]string{first.Backup: "Original.\n", second.Backup: "Second.\n"} {
+		if got := read(t, filepath.Join(dir, ".agents", "skills", "sync", "SKILL.md")); got != want {
+			t.Fatalf("backup contains %q, want %q", got, want)
+		}
+	}
+}
+
+func TestManagedStateDriftAndDryRun(t *testing.T) {
+	for _, which := range []string{"config", "manifest", "prompts"} {
+		t.Run(which, func(t *testing.T) {
+			cfg := newHome(t)
+			applied(t, cfg)
+			switch which {
+			case "config":
+				write(t, filepath.Join(cfg.CodexHome, "config.toml"), "model = \"custom\"\n")
+			case "manifest":
+				if err := os.Remove(filepath.Join(cfg.AgentsHome, "skills", ManifestName)); err != nil {
+					t.Fatal(err)
+				}
+			case "prompts":
+				write(t, filepath.Join(cfg.CodexHome, "prompts", "nested", "old.md"), "Legacy.\n")
+			}
+			plan, err := BuildPlan(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Check(cfg, plan); err == nil {
+				t.Fatal("managed state drift passed")
+			}
+			dry, err := Apply(cfg, plan, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual := applied(t, cfg)
+			if dry.Config != actual.Config || dry.Manifest != actual.Manifest || len(dry.Removed) != len(actual.Removed) {
+				t.Fatalf("dry run differs: %+v, %+v", dry, actual)
+			}
+		})
+	}
+}
+
+func TestMalformedStateFailsWithoutMutating(t *testing.T) {
+	for _, which := range []string{"manifest", "config"} {
+		t.Run(which, func(t *testing.T) {
+			cfg := newHome(t)
+			source := filepath.Join(cfg.ClaudeHome, "skills", "sync", "SKILL.md")
+			write(t, source, "Original.\n")
+			applied(t, cfg)
+			write(t, source, "Changed.\n")
+			if which == "manifest" {
+				write(t, filepath.Join(cfg.AgentsHome, "skills", ManifestName), "{invalid")
+			} else {
+				write(t, filepath.Join(cfg.CodexHome, "config.toml"), managedBegin+"\nmodel = \"keep\"\n")
+			}
+			plan, err := BuildPlan(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Apply(cfg, plan, false); err == nil {
+				t.Fatal("malformed managed state accepted")
+			}
+			if got := read(t, filepath.Join(cfg.AgentsHome, "skills", "sync", "SKILL.md")); got != "Original.\n" {
+				t.Fatal("files changed before state was validated")
+			}
+		})
+	}
+}
+
+func TestManifestPathsAreValidated(t *testing.T) {
+	for _, rel := range []string{".", "../other", "/absolute", "a/../b", "a\\b"} {
+		if validRelative(rel) {
+			t.Fatalf("accepted invalid relative path %q", rel)
+		}
+	}
+	cfg := newHome(t)
+	body, err := json.Marshal(manifest{Version: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(cfg.AgentsHome, "skills", ManifestName), string(body))
+	if _, err := readManifest(cfg); err == nil {
+		t.Fatal("unsupported manifest version accepted")
+	}
+}
+
+func TestDifferentCodexVariantIsNotSuppressed(t *testing.T) {
+	cfg := newHome(t)
+	write(t, filepath.Join(cfg.ClaudeHome, "skills", "sync", "SKILL.md"), "Claude variant.\n")
+	write(t, filepath.Join(cfg.CodexHome, "skills", "sync", "SKILL.md"), "Codex variant.\n")
+	plan, err := BuildPlan(cfg)
+	if err != nil || len(plan.Suppress) != 1 || !strings.HasPrefix(plan.Suppress[0], cfg.ClaudeHome) {
+		t.Fatalf("different variant suppressed: %+v, %v", plan, err)
+	}
+}
+
+func TestBackupFailureLeavesOriginalsUntouched(t *testing.T) {
+	cfg := newHome(t)
+	source := filepath.Join(cfg.ClaudeHome, "skills", "sync", "SKILL.md")
+	write(t, source, "Original.\n")
+	applied(t, cfg)
+	write(t, source, "Changed.\n")
+	write(t, cfg.BackupRoot, "A file blocks the backup directory.\n")
+	plan, err := BuildPlan(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(cfg, plan, false); err == nil {
+		t.Fatal("apply succeeded without its backup")
+	}
+	if got := read(t, filepath.Join(cfg.AgentsHome, "skills", "sync", "SKILL.md")); got != "Original.\n" {
+		t.Fatal("original changed despite failed backup")
+	}
+}
+
+func TestDestinationSymlinkIsRefused(t *testing.T) {
+	cfg := newHome(t)
+	source := filepath.Join(cfg.ClaudeHome, "skills", "sync", "SKILL.md")
+	write(t, source, "Source.\n")
+	root := filepath.Join(cfg.AgentsHome, "skills")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(source), filepath.Join(root, "sync")); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := BuildPlan(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(cfg, plan, false); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("destination link accepted: %v", err)
+	}
+}
+
+func TestHomesCannotOverlapOrDisappear(t *testing.T) {
+	cfg := newHome(t)
+	cfg.AgentsHome = cfg.ClaudeHome
+	if _, err := BuildPlan(cfg); err == nil {
+		t.Fatal("overlapping homes accepted")
+	}
+	cfg = newHome(t)
+	cfg.ClaudeHome = filepath.Join(cfg.ClaudeHome, "missing")
+	if _, err := BuildPlan(cfg); err == nil {
+		t.Fatal("missing source treated as an empty render")
+	}
+}
+
+func TestPromptBackupPreservesLinksWithoutNameCollisions(t *testing.T) {
+	cfg := newHome(t)
+	dir := filepath.Join(cfg.CodexHome, "prompts", "legacy")
+	write(t, filepath.Join(dir, "note.symlink"), "Keep the literal file.\n")
+	if err := os.Symlink("absent.md", filepath.Join(dir, "note")); err != nil {
+		t.Fatal(err)
+	}
+	report := applied(t, cfg)
+	dest := filepath.Join(report.Backup, ".codex", "prompts", "legacy")
+	if got, err := os.Readlink(filepath.Join(dest, "note")); err != nil || got != "absent.md" {
+		t.Fatalf("link not preserved: %q, %v", got, err)
+	}
+	if got := read(t, filepath.Join(dest, "note.symlink")); got != "Keep the literal file.\n" {
+		t.Fatal("symlink backup overwrote its neighbor")
 	}
 }
