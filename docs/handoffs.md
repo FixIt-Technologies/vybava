@@ -36,15 +36,18 @@ slugified), then a directory under `~/Work/Projects` (depth ≤ 4). A bare
 - **live** — any branch exists locally, on `origin` (as last fetched — the
   tool never fetches) or in a worktree; or any PR is OPEN.
 - **dead** — every branch is gone and every PR is MERGED/CLOSED; or the
-  Branch line says MERGED with nothing else alive; or there is no evidence
-  at all (no Branch line, or only `main`/`master`) and the file has not been
+  Branch line names a non-default branch and says it MERGED, with nothing
+  else alive; or there is no evidence at all (no Branch line, or only a
+  baseline — `main`/`master`/`devlp`/`dev`/`release`) and the file has not been
   touched for more than `--stale-days` (14).
 - **unknown** — a repo could not be resolved, `gh` could not answer for a
   PR, or there is no evidence yet the file is recent. Never archived.
 
-`--apply` rewrites only the frontmatter `status:` line to `abandoned` and
+`--apply` rewrites only the frontmatter `status:` line — `done` when the
+evidence says the work merged (a MERGED PR or the MERGED marker), `abandoned`
+when it simply stopped (branches gone, stale mtime) — and
 moves the file (or the whole `<slug>/` directory) under `<project>/archive/`,
 suffixing `-YYYYMMDD` when the name is taken. Nothing is ever deleted.
 
 The `--json` shape: `{items: [{path, project, slug, status, verdict, reason,
-branches, prs, mentions, archived?}], summary: {live, dead, unknown, archived}}`.
+branches, prs, mentions, archiveStatus?, archived?}], summary: {live, dead, unknown, archived}}`.

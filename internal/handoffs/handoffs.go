@@ -1,6 +1,7 @@
 // Package handoffs keeps the handoff ledger honest: it decides which open
 // handoffs under `~/.claude/handoffs` still have a branch or pull request
-// alive and archives the rest as abandoned. Nothing is ever deleted and an
+// alive and archives the rest — done when the work merged, abandoned when it
+// simply stopped. Nothing is ever deleted and an
 // `unknown` verdict is never acted on.
 package handoffs
 
@@ -51,16 +52,17 @@ type Options struct {
 }
 
 type Item struct {
-	Path     string   `json:"path"`
-	Project  string   `json:"project"`
-	Slug     string   `json:"slug"`
-	Status   string   `json:"status"`
-	Verdict  string   `json:"verdict"`
-	Reason   string   `json:"reason"`
-	Branches []string `json:"branches"` // repo@branch
-	PRs      []string `json:"prs"`      // owner/repo#N, or #N when the repo is unknown
-	Mentions []string `json:"mentions"` // PRs named below the first heading; context, never evidence
-	Archived string   `json:"archived,omitempty"`
+	Path          string   `json:"path"`
+	Project       string   `json:"project"`
+	Slug          string   `json:"slug"`
+	Status        string   `json:"status"`
+	Verdict       string   `json:"verdict"`
+	Reason        string   `json:"reason"`
+	Branches      []string `json:"branches"`                // repo@branch
+	PRs           []string `json:"prs"`                     // owner/repo#N, or #N when the repo is unknown
+	Mentions      []string `json:"mentions"`                // PRs named below the first heading; context, never evidence
+	ArchiveStatus string   `json:"archiveStatus,omitempty"` // done · abandoned — what --apply writes for a dead item
+	Archived      string   `json:"archived,omitempty"`
 }
 
 type Summary struct {
@@ -196,8 +198,9 @@ func judge(ctx context.Context, env Env, res *resolver, opts Options, c candidat
 		item.Mentions = append(item.Mentions, fmt.Sprintf("%s#%d", p.Repo, p.Number))
 	}
 	var live, unknown, dead []string
+	merged := ev.Merged // the work landed: archive as done rather than abandoned
 	for _, b := range ev.Branches {
-		if isDefaultBranch(b.Branch) {
+		if IsDefaultBranch(b.Branch) {
 			continue
 		}
 		repoSlug := b.Repo
@@ -235,6 +238,7 @@ func judge(ctx context.Context, env Env, res *resolver, opts Options, c candidat
 			live = append(live, "PR "+label+" open")
 		case "MERGED":
 			dead = append(dead, "PR "+label+" merged")
+			merged = true
 		case "CLOSED":
 			dead = append(dead, "PR "+label+" closed")
 		default:
@@ -258,14 +262,20 @@ func judge(ctx context.Context, env Env, res *resolver, opts Options, c candidat
 			item.Verdict, item.Reason = VerdictUnknown, "no branch/PR evidence"
 		}
 	}
+	if item.Verdict == VerdictDead {
+		item.ArchiveStatus = "abandoned"
+		if merged {
+			item.ArchiveStatus = "done"
+		}
+	}
 	return item
 }
 
-// archive flips the frontmatter status to abandoned (that one line only) and
+// archive flips the frontmatter status to item.ArchiveStatus (that one line only) and
 // moves the handoff — file or whole directory — under <project>/archive/,
 // suffixing -YYYYMMDD when the name is already taken.
 func archive(env Env, c candidate, item *Item) error {
-	rewritten, ok := setStatus(c.data, "abandoned")
+	rewritten, ok := setStatus(c.data, item.ArchiveStatus)
 	if !ok {
 		return fmt.Errorf("%s: no status line in frontmatter", c.path)
 	}
@@ -296,7 +306,7 @@ func archive(env Env, c candidate, item *Item) error {
 	if err := os.Rename(src, dst); err != nil {
 		return err
 	}
-	item.Status = "abandoned"
+	item.Status = item.ArchiveStatus
 	item.Archived = dst
 	if c.directory {
 		item.Archived = filepath.Join(dst, "handoff.md")

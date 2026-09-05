@@ -57,6 +57,18 @@ func TestExtract(t *testing.T) {
 			branches: []BranchRef{{"FixIt", "feat/mcp-sdk-v2"}, {"eve-ai-layer", "feat/mcp-client-v2"}},
 		},
 		{
+			name:     "main baseline is never merged evidence",
+			body:     "**Branch:** main @ bf8a63d06 (main clone; both work worktrees merged + removed)\n",
+			branches: []BranchRef{{"", "main"}},
+		},
+		{
+			name:     "named branch marked merged",
+			body:     "**Branch:** `work/fixacek-actions-gapfill` — **MERGED** as `1c2b02900` (PR #727)\n",
+			branches: []BranchRef{{"", "work/fixacek-actions-gapfill"}},
+			prs:      []PRRef{{"", 727}},
+			merged:   true,
+		},
+		{
 			name:     "merged with PR",
 			body:     "**Branch:** work/golden-spec @ abc1234 — **MERGED to main as PR #609**. Working tree clean.\n",
 			branches: []BranchRef{{"", "work/golden-spec"}},

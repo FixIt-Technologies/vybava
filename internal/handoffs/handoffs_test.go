@@ -94,7 +94,8 @@ func TestVerdicts(t *testing.T) {
 		{"open PR by owner/repo", "fixit", "Shipped in LEFTEQ/FixIt#11.", 0, VerdictLive, "PR LEFTEQ/FixIt#11 open"},
 		{"main only and fresh", "fixit", "**Branch:** main @ abc1234", 3 * 24 * time.Hour, VerdictUnknown, "no branch/PR evidence"},
 		{"no branch line and stale", "fixit", "Just prose.", 20 * 24 * time.Hour, VerdictDead, "no branch/PR evidence, untouched 20 days"},
-		{"marked merged", "fixit", "**Branch:** main @ abc1234 — MERGED to main", 0, VerdictDead, "Branch line marked MERGED"},
+		{"named branch marked merged", "fixit", "**Branch:** `work/gone` — **MERGED** as `1c2b02900` (worktree removed)", 0, VerdictDead, "Branch line marked MERGED"},
+		{"main baseline that mentions merged", "fixit", "**Branch:** main @ aaa657460 (all import work already merged; new UI work needs a fresh branch)", 0, VerdictUnknown, "no branch/PR evidence"},
 		{"repo not found", "mystery", "**Branch:** work/alive @ abc1234", 0, VerdictUnknown, "repo not found: mystery"},
 		{"PR state unknown", "fixit", "**Branch:** work/gone @ abc1234 (PR #99)", 0, VerdictUnknown, "PR LEFTEQ/FixIt#99 state unknown"},
 		{"walked repo", "forge", "**Branch:** feat/product @ abc1234", 0, VerdictLive, "branch forge@feat/product live"},
@@ -122,6 +123,32 @@ func TestVerdicts(t *testing.T) {
 	}
 }
 
+// TestArchiveStatus pins what --apply would write: done when the work merged,
+// abandoned when it merely stopped.
+func TestArchiveStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, body, want string }{
+		{"merged PR", "**Branch:** work/gone @ abc1234 (PR #10)", "done"},
+		{"MERGED marker", "**Branch:** `work/gone` — **MERGED** as `1c2b02900`", "done"},
+		{"branch gone", "**Branch:** work/gone @ abc1234", "abandoned"},
+		{"stale", "Just prose.", "abandoned"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			env := fixture(t, nil, map[string]string{"LEFTEQ/FixIt#10": "MERGED"})
+			write(t, filepath.Join(env.Home, "fixit", "task.md"), sprintf(handoff, "task", c.body), 30*24*time.Hour)
+			report, err := Reconcile(context.Background(), env, Options{})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if got := report.Items[0]; got.Verdict != VerdictDead || got.ArchiveStatus != c.want {
+				t.Errorf("verdict %q archiveStatus %q, want dead %q", got.Verdict, got.ArchiveStatus, c.want)
+			}
+		})
+	}
+}
+
 func TestApplyArchivesDeadOnly(t *testing.T) {
 	t.Parallel()
 	env := fixture(t, nil, nil)
@@ -130,6 +157,7 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	write(t, filepath.Join(env.Home, "fixit", "archive", "old.md"), sprintf(handoff, "old", "Already here."), stale)
 	write(t, filepath.Join(env.Home, "fixit", "big", "handoff.md"), sprintf(handoff, "big", "Prose."), stale)
 	write(t, filepath.Join(env.Home, "fixit", "big", "web.md"), "# Context\n", stale)
+	write(t, filepath.Join(env.Home, "fixit", "shipped.md"), sprintf(handoff, "shipped", "**Branch:** work/x @ abc1234 — **MERGED to main as PR #609**"), 0)
 	write(t, filepath.Join(env.Home, "fixit", "fresh.md"), sprintf(handoff, "fresh", "Prose."), 0)
 	write(t, filepath.Join(env.Home, "fixit", "done.md"), strings.Replace(sprintf(handoff, "done", "Prose."), "status: open", "status: done", 1), stale)
 
@@ -137,7 +165,7 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if got := report.Summary; got != (Summary{Dead: 2, Unknown: 1, Archived: 2}) {
+	if got := report.Summary; got != (Summary{Dead: 3, Unknown: 1, Archived: 3}) {
 		t.Fatalf("summary = %+v", got)
 	}
 	moved := filepath.Join(env.Home, "fixit", "archive", "old-20260905.md")
@@ -147,6 +175,10 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	}
 	if want := strings.Replace(sprintf(handoff, "old", "Prose."), "status: open", "status: abandoned", 1); string(data) != want {
 		t.Errorf("rewritten handoff = %q, want %q", data, want)
+	}
+	shipped, err := os.ReadFile(filepath.Join(env.Home, "fixit", "archive", "shipped.md"))
+	if err != nil || !strings.Contains(string(shipped), "\nstatus: done\n") {
+		t.Errorf("merged handoff should archive as done: %v %q", err, shipped)
 	}
 	for _, path := range []string{
 		filepath.Join(env.Home, "fixit", "archive", "big", "handoff.md"),
