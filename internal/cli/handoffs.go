@@ -44,7 +44,8 @@ func (rt *runtime) handoffsReconcileCommand() *cobra.Command {
 		Long: `Reads each open/in-progress handoff's Branch line and PR references, asks
 git (no fetch) and gh whether any of them is still alive, and prints a verdict
 per handoff: live, dead or unknown. Dry run by default; --apply flips dead
-handoffs to status: abandoned and moves them under <project>/archive/.
+handoffs to status: done (the work merged) or abandoned and moves them under
+<project>/archive/.
 Unknown is never archived and nothing is ever deleted.`,
 		Example: `  handoffs reconcile                       # dry run over ~/.claude/handoffs
   handoffs reconcile --project fixit       # one project
@@ -78,7 +79,11 @@ Unknown is never archived and nothing is ever deleted.`,
 			}
 			fmt.Fprintf(rt.stdout, "%-40s %-22s %-8s %s\n", "SLUG", "PROJECT", "VERDICT", "REASON")
 			for _, item := range report.Items {
-				fmt.Fprintf(rt.stdout, "%-40s %-22s %-8s %s\n", trunc(item.Slug, 40), trunc(item.Project, 22), item.Verdict, item.Reason)
+				reason := item.Reason
+				if item.ArchiveStatus != "" {
+					reason += " → " + item.ArchiveStatus
+				}
+				fmt.Fprintf(rt.stdout, "%-40s %-22s %-8s %s\n", trunc(item.Slug, 40), trunc(item.Project, 22), item.Verdict, reason)
 			}
 			for _, item := range report.Items {
 				if item.Archived != "" {
@@ -96,7 +101,7 @@ Unknown is never archived and nothing is ever deleted.`,
 	}
 	command.Flags().StringVar(&home, "home", "~/.claude/handoffs", "handoffs home")
 	command.Flags().StringVar(&project, "project", "", "only this project slug")
-	command.Flags().BoolVar(&apply, "apply", false, "archive dead handoffs (status: abandoned, moved under archive/)")
+	command.Flags().BoolVar(&apply, "apply", false, "archive dead handoffs (status: done when merged, else abandoned; moved under archive/)")
 	command.Flags().IntVar(&staleDays, "stale-days", handoffs.DefaultStaleDays, "a handoff with no branch/PR evidence is dead after this many untouched days")
 	return command
 }

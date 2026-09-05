@@ -122,6 +122,32 @@ func TestVerdicts(t *testing.T) {
 	}
 }
 
+// TestArchiveStatus pins what --apply would write: done when the work merged,
+// abandoned when it merely stopped.
+func TestArchiveStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct{ name, body, want string }{
+		{"merged PR", "**Branch:** work/gone @ abc1234 (PR #10)", "done"},
+		{"MERGED marker", "**Branch:** main @ abc1234 — MERGED to main", "done"},
+		{"branch gone", "**Branch:** work/gone @ abc1234", "abandoned"},
+		{"stale", "Just prose.", "abandoned"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			env := fixture(t, nil, map[string]string{"LEFTEQ/FixIt#10": "MERGED"})
+			write(t, filepath.Join(env.Home, "fixit", "task.md"), sprintf(handoff, "task", c.body), 30*24*time.Hour)
+			report, err := Reconcile(context.Background(), env, Options{})
+			if err != nil {
+				t.Fatalf("Reconcile() error = %v", err)
+			}
+			if got := report.Items[0]; got.Verdict != VerdictDead || got.ArchiveStatus != c.want {
+				t.Errorf("verdict %q archiveStatus %q, want dead %q", got.Verdict, got.ArchiveStatus, c.want)
+			}
+		})
+	}
+}
+
 func TestApplyArchivesDeadOnly(t *testing.T) {
 	t.Parallel()
 	env := fixture(t, nil, nil)
@@ -130,6 +156,7 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	write(t, filepath.Join(env.Home, "fixit", "archive", "old.md"), sprintf(handoff, "old", "Already here."), stale)
 	write(t, filepath.Join(env.Home, "fixit", "big", "handoff.md"), sprintf(handoff, "big", "Prose."), stale)
 	write(t, filepath.Join(env.Home, "fixit", "big", "web.md"), "# Context\n", stale)
+	write(t, filepath.Join(env.Home, "fixit", "shipped.md"), sprintf(handoff, "shipped", "**Branch:** work/x @ abc1234 — MERGED to main"), 0)
 	write(t, filepath.Join(env.Home, "fixit", "fresh.md"), sprintf(handoff, "fresh", "Prose."), 0)
 	write(t, filepath.Join(env.Home, "fixit", "done.md"), strings.Replace(sprintf(handoff, "done", "Prose."), "status: open", "status: done", 1), stale)
 
@@ -137,7 +164,7 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
 	}
-	if got := report.Summary; got != (Summary{Dead: 2, Unknown: 1, Archived: 2}) {
+	if got := report.Summary; got != (Summary{Dead: 3, Unknown: 1, Archived: 3}) {
 		t.Fatalf("summary = %+v", got)
 	}
 	moved := filepath.Join(env.Home, "fixit", "archive", "old-20260905.md")
@@ -147,6 +174,10 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	}
 	if want := strings.Replace(sprintf(handoff, "old", "Prose."), "status: open", "status: abandoned", 1); string(data) != want {
 		t.Errorf("rewritten handoff = %q, want %q", data, want)
+	}
+	shipped, err := os.ReadFile(filepath.Join(env.Home, "fixit", "archive", "shipped.md"))
+	if err != nil || !strings.Contains(string(shipped), "\nstatus: done\n") {
+		t.Errorf("merged handoff should archive as done: %v %q", err, shipped)
 	}
 	for _, path := range []string{
 		filepath.Join(env.Home, "fixit", "archive", "big", "handoff.md"),
