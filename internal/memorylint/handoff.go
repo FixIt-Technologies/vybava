@@ -27,6 +27,11 @@ var (
 	sessionIDPattern   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	handoffStatuses    = []string{"open", "in-progress", "done", "abandoned"}
 	archivedStatuses   = []string{"done", "abandoned"}
+	// featurePattern is the ledger key: a vitrinka project slug and an epic id.
+	featurePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*/[0-9]+$`)
+	// featureRequiredFrom: handoffs created on or after this date must name
+	// their feature (or `none`); the 345 older ones stay exempt.
+	featureRequiredFrom = time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
 )
 
 // legacySession is the one non-uuid created-by the schema accepts: handoffs
@@ -38,11 +43,12 @@ type handoffFrontmatter struct {
 	Description string   `yaml:"description"`
 	Status      string   `yaml:"status"`
 	Created     string   `yaml:"created"`
+	Feature     string   `yaml:"feature"`
 	CreatedBy   string   `yaml:"created-by"`
 	Sessions    []string `yaml:"sessions"`
 }
 
-func isHandoffHome(path string) bool {
+func IsHandoffHome(path string) bool {
 	return handoffHomePattern.MatchString(filepath.ToSlash(path))
 }
 
@@ -55,9 +61,9 @@ func handoffHomeRoot(path string) string {
 	}
 }
 
-// handoffSlug returns the slug a handoff file must be named after, and whether
+// HandoffSlug returns the slug a handoff file must be named after, and whether
 // the file is a handoff (as opposed to a context file) and archived.
-func handoffSlug(relative string) (slug string, isHandoff, archived bool) {
+func HandoffSlug(relative string) (slug string, isHandoff, archived bool) {
 	parts := strings.Split(filepath.ToSlash(relative), "/")
 	if len(parts) < 2 {
 		return "", false, false
@@ -81,7 +87,7 @@ func validSession(id string) bool {
 }
 
 func handoffFindings(path, relative string, data []byte) []Finding {
-	slug, isHandoff, archived := handoffSlug(relative)
+	slug, isHandoff, archived := HandoffSlug(relative)
 	if !isHandoff {
 		return nil
 	}
@@ -105,8 +111,14 @@ func handoffFindings(path, relative string, data []byte) []Finding {
 	} else if contains(archivedStatuses, parsed.Status) != archived {
 		findings = append(findings, finding("H002", SeverityError, path, 1, "status %q belongs %s archive/", parsed.Status, map[bool]string{true: "under", false: "outside"}[!archived]))
 	}
-	if _, err := time.Parse("2006-01-02", parsed.Created); err != nil {
+	created, err := time.Parse("2006-01-02", parsed.Created)
+	if err != nil {
 		fail("created must be YYYY-MM-DD")
+	} else if parsed.Feature == "" && !created.Before(featureRequiredFrom) {
+		fail("frontmatter is missing feature: <project>/<taskId> or none")
+	}
+	if parsed.Feature != "" && parsed.Feature != "none" && !featurePattern.MatchString(parsed.Feature) {
+		fail("feature %q must be none or <project>/<taskId>", parsed.Feature)
 	}
 	if !validSession(parsed.CreatedBy) {
 		fail("created-by must be a session id")

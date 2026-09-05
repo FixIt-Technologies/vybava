@@ -63,12 +63,17 @@ name: <slug>              # H001 — must equal the slug
 description: <one line>
 status: open              # open · in-progress · done · abandoned
 created: YYYY-MM-DD
+feature: <project>/<taskId>  # vitrinka epic (or `none`); required from 2026-09-05, legacy exempt
 created-by: <session id>  # uuid, or `unknown` for pre-schema handoffs
 sessions: [<session id>]  # every session that worked it, created-by first
 ```
 
 H002: `done`/`abandoned` belong under `archive/`, `open`/`in-progress` outside
 it. H003 (warning, never a write block): a handoff is at most 200 lines.
+
+The `feature` key is the ledger link: `<project>/<taskId>` (a vitrinka epic)
+or `none`; required for handoffs created from 2026-09-05 on, legacy ones
+exempt. Which open handoffs are still live is `handoffs reconcile` (`docs/handoffs.md`).
 
 ## Configuration
 

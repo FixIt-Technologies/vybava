@@ -116,6 +116,40 @@ sessions:
 	}
 }
 
+// TestHandoffFeature pins the ledger key: optional for legacy handoffs, required
+// from 2026-09-05 on, and always either `none` or `<project>/<taskId>`.
+func TestHandoffFeature(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, created, feature string
+		wantH001               int
+	}{
+		{"legacy-without", "2026-09-04", "", 0},
+		{"new-without", "2026-09-05", "", 1},
+		{"new-none", "2026-09-05", "feature: none", 0},
+		{"new-epic", "2026-09-05", "feature: reservine/1234", 0},
+		{"malformed", "2026-09-05", "feature: Reservine/abc", 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			home := handoffHome(t)
+			body := strings.Replace(sprintf(goodHandoff, c.name, "open"), "created: 2026-09-03", "created: "+c.created, 1)
+			if c.feature != "" {
+				body = strings.Replace(body, "\nsessions:", "\n"+c.feature+"\nsessions:", 1)
+			}
+			writeDeep(t, filepath.Join(home, "cpi", c.name+".md"), body)
+			report, err := memorylint.Lint([]string{home})
+			if err != nil {
+				t.Fatalf("Lint() error = %v", err)
+			}
+			if got := rules(report)["H001"]; got != c.wantH001 {
+				t.Errorf("H001 = %d, want %d: %#v", got, c.wantH001, report.Findings)
+			}
+		})
+	}
+}
+
 func TestHookTargetsHandoffs(t *testing.T) {
 	t.Parallel()
 	home := handoffHome(t)

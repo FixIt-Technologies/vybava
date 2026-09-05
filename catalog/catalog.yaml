@@ -55,6 +55,12 @@ items:
     description: Emergency disk reclaim for a dev Mac — a fixed ladder of regenerating caches deleted biggest-first with live df after every step, an early-stop target, and by-hand notes for what it refuses to touch (volumes, recordings).
     applet: reclaim
 
+  - id: handoffs
+    kind: applet
+    status: experimental
+    description: Handoff ledger upkeep — `handoffs reconcile` judges every open handoff by whether its branches and PRs are still alive (git, no fetch; gh) and archives the dead ones as abandoned; unknown is never touched, nothing is deleted.
+    applet: handoffs
+
   - id: prm
     kind: skill
     status: experimental
@@ -121,6 +127,7 @@ groups:
       - hotfix
       - hotfix-lane
       - reclaim
+      - handoffs
       - prm
       - prc
       - merge
@@ -161,6 +168,7 @@ groups:
       - ingressgen
       - reconcile
       - reclaim
+      - handoffs
       - prm
       - prc
       - merge

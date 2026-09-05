@@ -96,6 +96,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "reclaim" {
 		return rt.reclaimApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "handoffs" {
+		return rt.handoffsApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -122,6 +125,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.hotfixCommand("hotfix"),
 		rt.reconcileCommand("reconcile"),
 		rt.reclaimCommand("reclaim"),
+		rt.handoffsCommand("handoffs"),
 		rt.browseCommand(),
 	)
 	return root, nil

@@ -51,7 +51,7 @@ func memoryPath(path, cwd string) (string, bool) {
 	}
 	path = filepath.Clean(path)
 	slash := filepath.ToSlash(path)
-	if isHandoffHome(slash) {
+	if IsHandoffHome(slash) {
 		return path, true
 	}
 	if !strings.Contains(slash, "/memory/") && !strings.HasSuffix(slash, "/memory") {
@@ -201,7 +201,7 @@ func RunHook(stdin io.Reader) HookDecision {
 			config = DefaultConfig()
 		}
 		scan := fixtureFindings
-		if isHandoffHome(targets[0]) {
+		if IsHandoffHome(targets[0]) {
 			scan = secretFindings
 		}
 		if findings := scan(targets[0], []byte(content), config); len(findings) > 0 {
@@ -238,7 +238,7 @@ func RunHook(stdin io.Reader) HookDecision {
 			continue
 		}
 		root := memoryHomeRoot(path)
-		if isHandoffHome(path) {
+		if IsHandoffHome(path) {
 			root = handoffHomeRoot(path)
 		}
 		if _, seen := byRoot[root]; !seen {
