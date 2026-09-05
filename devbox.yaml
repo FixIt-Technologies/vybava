@@ -1,0 +1,16 @@
+project: vybava
+
+resources:
+  memory: 3G
+
+apps:
+  repo:
+    # Devbox requires a named port even for a CLI-only test workspace.
+    ports: [repo]
+    cmd: sleep infinity
+    sync: .
+    sync_ignores: [".env", ".env.*", "dist", "coverage.out", "vybava"]
+
+scripts:
+  test: go test -race ./...
+  verify: go vet ./... && go test -race ./... && go build -trimpath ./cmd/vybava

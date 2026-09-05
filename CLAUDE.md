@@ -33,3 +33,9 @@ go run ./cmd/vybava doctor
 ```
 
 Run `go fmt ./...` after Go edits. Utilities are Go — never Python helpers.
+
+Run verification remotely with `devbox run verify` using `devbox.yaml`. Its
+`repo` app holds the CLI test workspace open; its reserved port serves no UI.
+`internal/codexsync/storage.go` owns codexsync's destination validation,
+atomic file writes, and empty-directory cleanup; rendering stays in
+`internal/codexsync/codexsync.go`. See `docs/codexsync.md` for ownership rules.

@@ -37,6 +37,12 @@ items:
     description: Render and drift-check complete default-deny DOCKER-USER iptables policies from project-owned manifests.
     applet: ingressgen
 
+  - id: codexsync
+    kind: applet
+    status: experimental
+    description: Render ~/.claude skills and commands into ~/.agents/skills, the structure Codex actually discovers — nesting preserved, each command a source-command skill, duplicate discovery suppressed in config.toml.
+    applet: codexsync
+
   - id: reconcile
     kind: applet
     status: experimental
@@ -124,6 +130,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - codexsync
       - hotfix
       - hotfix-lane
       - reclaim
