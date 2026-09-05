@@ -5,11 +5,14 @@
 # against the release's checksums.txt, installs the multicall `vybava` binary,
 # and optionally links the requested applets / installs the requested skills.
 #
-#   curl -fsSL https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
-#     | bash -s -- --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
+#   curl -fsSL -o /tmp/vybava-install.sh \
+#     https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
+#   && bash /tmp/vybava-install.sh --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
 #
-# Pin BOTH the script ref and --version to the same tag. Idempotent: re-running
-# with the same version replaces the binary and re-links the applets.
+# Download, THEN run — never `curl … | bash`: without pipefail a 404 hands bash
+# an empty script and the step exits 0 having installed nothing. Pin BOTH the
+# script ref and --version to the same tag. Idempotent: re-running with the
+# same version replaces the binary and re-links the applets.
 #
 #   --version <x.y.z>     release to install (required unless --from-dir)
 #   --bin-dir <dir>       where `vybava` and applet links go (default /usr/local/bin)
@@ -38,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     --agent) agent="${2:?--agent needs a value}"; shift 2 ;;
     --from-dir) from_dir="${2:?--from-dir needs a value}"; shift 2 ;;
     --repo) repo="${2:?--repo needs a value}"; shift 2 ;;
-    -h|--help) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -60,7 +63,7 @@ work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 
 if [[ -n "$from_dir" ]]; then
-  archive=$(find "$from_dir" -maxdepth 1 -name "vybava_*_${os}_${arch}.tar.gz" | head -1)
+  archive=$(find "$from_dir" -maxdepth 1 -name "vybava_*_${os}_${arch}.tar.gz" 2>/dev/null | head -1)
   [[ -n "$archive" ]] || die "no vybava_*_${os}_${arch}.tar.gz in $from_dir"
   cp -- "$archive" "$from_dir/checksums.txt" "$work/"
   archive_name=$(basename "$archive")
@@ -93,6 +96,9 @@ if [[ -n "$items" ]]; then
   "$bin_dir/vybava" install ${items//,/ } --bin-dir "$bin_dir" --agent "$agent"
 fi
 
-printf 'installed %s → %s/vybava' "$("$bin_dir/vybava" --version 2>/dev/null || echo vybava)" "$bin_dir"
+# The installed binary must actually run on this host — an archive for the
+# wrong libc or a truncated extract must fail the install, not print success.
+version_line=$("$bin_dir/vybava" --version) || die "$bin_dir/vybava does not run on this host"
+printf 'installed %s → %s/vybava' "$version_line" "$bin_dir"
 [[ -n "$items" ]] && printf ' (+ %s)' "$items"
 printf '\n'

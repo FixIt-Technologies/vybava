@@ -10,11 +10,14 @@ internal, and a pipeline must never `actions/checkout` this repository or
 
 Installs a tagged release — the same archive the Homebrew cask ships — after
 verifying it against the release's `checksums.txt`, then links the applets
-you name. Pin the script ref and `--version` to the same tag:
+you name. Download the script, then run it — never `curl … | bash`: without
+`pipefail` a 404 hands bash an empty script and the step exits 0 with nothing
+installed. Pin the script ref and `--version` to the same tag:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
-  | bash -s -- --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
+curl -fsSL -o /tmp/vybava-install.sh \
+  https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
+  && bash /tmp/vybava-install.sh --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
 ```
 
 | Flag | Meaning |

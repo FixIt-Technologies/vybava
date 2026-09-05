@@ -58,8 +58,11 @@ func buildRelease(t *testing.T, version string) string {
 func runInstaller(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	cmd := exec.Command("bash", append([]string{filepath.Join(repoRoot(t), "ci", "install.sh")}, args...)...)
-	// Skills would land in the real agent home; point HOME at a scratch dir.
-	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
+	// Skills land in the agent home and `vybava install` records state under
+	// XDG_CONFIG_HOME (else HOME); point both at scratch dirs so a developer's
+	// real homes are never touched.
+	scratch := t.TempDir()
+	cmd.Env = append(os.Environ(), "HOME="+scratch, "XDG_CONFIG_HOME="+filepath.Join(scratch, ".config"))
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

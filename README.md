@@ -34,8 +34,9 @@ CI images, workflows and provisioning scripts use the release installer in
 [`ci/`](ci/README.md) — never a checkout of this repository:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
-  | bash -s -- --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
+curl -fsSL -o /tmp/vybava-install.sh \
+  https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
+  && bash /tmp/vybava-install.sh --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
 ```
 
 From source:
