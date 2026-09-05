@@ -94,7 +94,8 @@ func TestVerdicts(t *testing.T) {
 		{"open PR by owner/repo", "fixit", "Shipped in LEFTEQ/FixIt#11.", 0, VerdictLive, "PR LEFTEQ/FixIt#11 open"},
 		{"main only and fresh", "fixit", "**Branch:** main @ abc1234", 3 * 24 * time.Hour, VerdictUnknown, "no branch/PR evidence"},
 		{"no branch line and stale", "fixit", "Just prose.", 20 * 24 * time.Hour, VerdictDead, "no branch/PR evidence, untouched 20 days"},
-		{"marked merged", "fixit", "**Branch:** main @ abc1234 — MERGED to main", 0, VerdictDead, "Branch line marked MERGED"},
+		{"named branch marked merged", "fixit", "**Branch:** `work/gone` — **MERGED** as `1c2b02900` (worktree removed)", 0, VerdictDead, "Branch line marked MERGED"},
+		{"main baseline that mentions merged", "fixit", "**Branch:** main @ aaa657460 (all import work already merged; new UI work needs a fresh branch)", 0, VerdictUnknown, "no branch/PR evidence"},
 		{"repo not found", "mystery", "**Branch:** work/alive @ abc1234", 0, VerdictUnknown, "repo not found: mystery"},
 		{"PR state unknown", "fixit", "**Branch:** work/gone @ abc1234 (PR #99)", 0, VerdictUnknown, "PR LEFTEQ/FixIt#99 state unknown"},
 		{"walked repo", "forge", "**Branch:** feat/product @ abc1234", 0, VerdictLive, "branch forge@feat/product live"},
@@ -128,7 +129,7 @@ func TestArchiveStatus(t *testing.T) {
 	t.Parallel()
 	cases := []struct{ name, body, want string }{
 		{"merged PR", "**Branch:** work/gone @ abc1234 (PR #10)", "done"},
-		{"MERGED marker", "**Branch:** main @ abc1234 — MERGED to main", "done"},
+		{"MERGED marker", "**Branch:** `work/gone` — **MERGED** as `1c2b02900`", "done"},
 		{"branch gone", "**Branch:** work/gone @ abc1234", "abandoned"},
 		{"stale", "Just prose.", "abandoned"},
 	}
@@ -156,7 +157,7 @@ func TestApplyArchivesDeadOnly(t *testing.T) {
 	write(t, filepath.Join(env.Home, "fixit", "archive", "old.md"), sprintf(handoff, "old", "Already here."), stale)
 	write(t, filepath.Join(env.Home, "fixit", "big", "handoff.md"), sprintf(handoff, "big", "Prose."), stale)
 	write(t, filepath.Join(env.Home, "fixit", "big", "web.md"), "# Context\n", stale)
-	write(t, filepath.Join(env.Home, "fixit", "shipped.md"), sprintf(handoff, "shipped", "**Branch:** work/x @ abc1234 — MERGED to main"), 0)
+	write(t, filepath.Join(env.Home, "fixit", "shipped.md"), sprintf(handoff, "shipped", "**Branch:** work/x @ abc1234 — **MERGED to main as PR #609**"), 0)
 	write(t, filepath.Join(env.Home, "fixit", "fresh.md"), sprintf(handoff, "fresh", "Prose."), 0)
 	write(t, filepath.Join(env.Home, "fixit", "done.md"), strings.Replace(sprintf(handoff, "done", "Prose."), "status: open", "status: done", 1), stale)
 

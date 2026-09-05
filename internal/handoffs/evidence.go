@@ -11,7 +11,7 @@ type Evidence struct {
 	Branches []BranchRef
 	PRs      []PRRef
 	Mentions []PRRef // PRs named below the first heading — context, never evidence
-	Merged   bool    // the Branch line says the work is merged
+	Merged   bool    // the Branch line names a non-default branch and says it merged
 }
 
 // BranchRef names a branch; Repo is a repo name or project slug, "" meaning
@@ -50,6 +50,9 @@ var (
 	repoStopwords = set("worktree", "off", "from", "on", "to", "as", "the", "in", "via", "see", "at", "of", "and", "or", "branch", "checkout", "into", "onto", "is", "was", "reuse", "with", "for", "by", "use", "under", "reviewed", "now", "currently", "deployed", "pushed", "clean", "tree")
 	// words that sit where a branch name would but are prose
 	branchStopwords = set("none", "n/a", "whatever", "start", "work", "tbd", "aggregate", "primary", "origin")
+	// defaultBranches are baselines, never evidence: a Branch line naming only
+	// one of these describes where NEW work starts.
+	defaultBranches = set("main", "master", "devlp", "dev", "develop", "release")
 )
 
 // Extract reads the Branch line(s) and PR references out of a handoff. Only
@@ -59,6 +62,7 @@ func Extract(body string) Evidence {
 	var ev Evidence
 	header, rest := splitHeader(body)
 	seen := map[BranchRef]bool{}
+	named := 0 // non-default branches found on the current Branch line
 	addBranch := func(repo, branch string) {
 		branch = strings.TrimPrefix(branch, "origin/")
 		if branchStopwords[strings.ToLower(branch)] || shaToken.MatchString(branch) {
@@ -71,12 +75,13 @@ func Extract(body string) Evidence {
 		if !seen[ref] {
 			seen[ref] = true
 			ev.Branches = append(ev.Branches, ref)
+			if !IsDefaultBranch(branch) {
+				named++
+			}
 		}
 	}
 	for _, text := range branchLines(header) {
-		if mergedRE.MatchString(notMerged.ReplaceAllString(text, "")) {
-			ev.Merged = true
-		}
+		named = 0
 		consumed := map[string]bool{}
 		for _, m := range repoAtBranch.FindAllStringSubmatch(text, -1) {
 			addBranch(m[1], m[2])
@@ -104,6 +109,11 @@ func Extract(body string) Evidence {
 			if !consumed[m[1]] {
 				addBranch("", m[1])
 			}
+		}
+		// "merged" only counts when said about a named branch — "main @ sha (old
+		// work merged)" is the baseline of new work, not a verdict.
+		if named > 0 && mergedRE.MatchString(notMerged.ReplaceAllString(text, "")) {
+			ev.Merged = true
 		}
 	}
 	ev.PRs = prRefs(header)
@@ -168,6 +178,11 @@ func branchLines(body string) []string {
 		out = append(out, text)
 	}
 	return out
+}
+
+// IsDefaultBranch reports a baseline branch name — never liveness evidence.
+func IsDefaultBranch(branch string) bool {
+	return defaultBranches[strings.ToLower(branch)]
 }
 
 func set(words ...string) map[string]bool {

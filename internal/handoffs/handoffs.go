@@ -200,7 +200,7 @@ func judge(ctx context.Context, env Env, res *resolver, opts Options, c candidat
 	var live, unknown, dead []string
 	merged := ev.Merged // the work landed: archive as done rather than abandoned
 	for _, b := range ev.Branches {
-		if isDefaultBranch(b.Branch) {
+		if IsDefaultBranch(b.Branch) {
 			continue
 		}
 		repoSlug := b.Repo
