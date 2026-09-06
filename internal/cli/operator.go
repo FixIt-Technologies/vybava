@@ -254,7 +254,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 		if attentionSince != "" {
 			var err error
 			since, err = time.Parse(time.RFC3339, attentionSince)
-			if err != nil || watchThread == "" {
+			if err != nil || since.IsZero() || strings.TrimSpace(watchThread) == "" {
 				return errors.New("--attention-since requires an RFC3339 timestamp and --thread")
 			}
 		}
