@@ -81,7 +81,10 @@ as a successful live WhatsApp trial.
 `snapshot --json` returns a versioned, consistent view of events with prepared
 responses, including superseded history, human feedback, summary counts and the
 last successful source scan. `checked_at` is the view read time; `last_scan_at`
-is updated only by a successful watcher scan. A readable snapshot is not evidence
+is updated only by a successful watcher scan. Read commands (`snapshot`, `status`,
+`list`, `show`) read the last atomically published state without waiting for a
+scanning writer. They never expose an in-progress scan or persist callback changes.
+A readable snapshot is not evidence
 that the watcher or Codex is working. A scan older than 30 seconds is displayed as
 potentially stopped by the native companion. WhatsApp is still manually observed.
 
@@ -90,7 +93,8 @@ a numeric score. Feedback is append-only and attached to that exact proposal,
 including after its source context changes. Neither feedback nor a rating sends
 or approves anything in the source app.
 
-Companion builds upgrade state v1 to v2 under the normal lock. Stop old watcher
+Companion writes upgrade state v1 to v2 under the normal lock; read commands leave
+the persisted version unchanged. Stop old watcher
 processes and retain a private backup before upgrading a live trial. Upgrade all
 CLI entry points used for that trial together: old binaries deliberately reject
 v2 instead of dropping its new feedback and scan fields. Do not downgrade by

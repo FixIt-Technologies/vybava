@@ -5,7 +5,59 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestViewReadsLastCommittedStateWhileScanHoldsWriterLock(t *testing.T) {
+	s := testStore(t)
+	addObservation(t, s, "committed")
+	entered, release := make(chan struct{}), make(chan struct{})
+	writer := make(chan error, 1)
+	go func() {
+		writer <- s.With(func(state *State) error {
+			state.Events[0].Text = "next scan"
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	type result struct {
+		text string
+		err  error
+	}
+	reader := make(chan result, 1)
+	go func() {
+		var text string
+		err := s.View(func(state *State) error { text = state.Events[0].Text; return nil })
+		reader <- result{text, err}
+	}()
+	read := false
+	select {
+	case r := <-reader:
+		read = true
+		if r.err != nil || r.text != "Can we meet at ten?" {
+			t.Errorf("read uncommitted state or failed: %+v", r)
+		}
+	case <-time.After(time.Second):
+		t.Error("view waited for the scanning writer instead of reading the committed state")
+	}
+	close(release)
+	if err := <-writer; err != nil {
+		t.Fatal(err)
+	}
+	if !read {
+		<-reader
+	}
+	if err := s.View(func(state *State) error {
+		if state.Events[0].Text != "next scan" {
+			t.Error("next view did not see the committed scan")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestLargeCompactionDoesNotBlockFollowingAssistantMessage(t *testing.T) {
 	s := testStore(t)

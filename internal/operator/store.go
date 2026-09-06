@@ -76,7 +76,20 @@ type State struct {
 
 type Store struct{ Dir string }
 
-func (s Store) With(fn func(*State) error) error {
+// View reads the last atomically published state without waiting for a scan.
+// Callback changes are local only; writers must use With.
+func (s Store) View(fn func(*State) error) error {
+	if err := s.prepare(); err != nil {
+		return err
+	}
+	state, _, err := s.load()
+	if err != nil {
+		return err
+	}
+	return fn(&state)
+}
+
+func (s Store) prepare() error {
 	if err := os.MkdirAll(s.Dir, 0700); err != nil {
 		return err
 	}
@@ -87,34 +100,50 @@ func (s Store) With(fn func(*State) error) error {
 	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
 		return fmt.Errorf("operator state directory must be a private directory (0700): %s", s.Dir)
 	}
-	unlock, err := lock(filepath.Join(s.Dir, "state.lock"))
-	if err != nil {
-		return err
-	}
-	defer unlock()
+	return nil
+}
+
+func (s Store) load() (State, []byte, error) {
 	state := State{Version: 2, Roots: map[string]bool{}, Cursors: map[string]Cursor{}}
 	path := filepath.Join(s.Dir, "state.json")
 	var original []byte
 	if info, err := os.Lstat(path); err == nil {
 		if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
-			return errors.New("operator state file must be a private regular file")
+			return State{}, nil, errors.New("operator state file must be a private regular file")
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return State{}, nil, err
 		}
 		original = data
 		if err := json.Unmarshal(data, &state); err != nil {
-			return fmt.Errorf("read operator state: %w", err)
+			return State{}, nil, fmt.Errorf("read operator state: %w", err)
 		}
 		if (state.Version != 1 && state.Version != 2) || state.Roots == nil || state.Cursors == nil {
-			return errors.New("unsupported or incomplete operator state")
+			return State{}, nil, errors.New("unsupported or incomplete operator state")
 		}
 		// Older binaries reject v2 instead of silently dropping human feedback.
 		state.Version = 2
 	} else if !errors.Is(err, os.ErrNotExist) {
+		return State{}, nil, err
+	}
+	return state, original, nil
+}
+
+func (s Store) With(fn func(*State) error) error {
+	if err := s.prepare(); err != nil {
 		return err
 	}
+	unlock, err := lock(filepath.Join(s.Dir, "state.lock"))
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	state, original, err := s.load()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(s.Dir, "state.json")
 	if err := fn(&state); err != nil {
 		return err
 	}

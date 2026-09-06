@@ -60,7 +60,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			return err
 		}
 		var summary operator.Summary
-		if err := s.With(func(state *operator.State) error { summary = state.Summary(); return nil }); err != nil {
+		if err := s.View(func(state *operator.State) error { summary = state.Summary(); return nil }); err != nil {
 			return err
 		}
 		if rt.json {
@@ -83,7 +83,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			Proposals    int             `json:"proposals"`
 		}
 		rows := []row{}
-		if err := s.With(func(state *operator.State) error {
+		if err := s.View(func(state *operator.State) error {
 			for _, e := range state.Events {
 				rows = append(rows, row{e.ID, e.Source, e.Delivery, e.Superseded, e.AcknowledgedAt != nil, len(e.Proposals)})
 			}
@@ -107,7 +107,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			return err
 		}
 		var event operator.Event
-		if err := s.With(func(state *operator.State) error {
+		if err := s.View(func(state *operator.State) error {
 			e, err := state.Find(args[0])
 			if err == nil {
 				event = *e
@@ -197,7 +197,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			return err
 		}
 		var result operator.CompanionSnapshot
-		if err := s.With(func(state *operator.State) error { result = state.Snapshot(); return nil }); err != nil {
+		if err := s.View(func(state *operator.State) error { result = state.Snapshot(); return nil }); err != nil {
 			return err
 		}
 		return output(result)
