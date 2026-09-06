@@ -58,6 +58,9 @@ func (rt *runtime) plaudSession() (plaud.Session, error) {
 			fmt.Fprintln(rt.stderr, "⚠️  plaud: Plaud rotated the refresh token during this call; the vault copy is now stale.")
 			fmt.Fprintln(rt.stderr, "    Re-run `plaud refresh --json` through the onyx capture flow (see the plaud skill) to store the new one.")
 		},
+		Warn: func(err error) {
+			fmt.Fprintf(rt.stderr, "⚠️  plaud: %v (the token still works; the next call refreshes again)\n", err)
+		},
 	}, nil
 }
 
@@ -122,10 +125,15 @@ token is cached on disk.`,
 			if err != nil {
 				return err
 			}
-			if err := session.CacheAccessToken(token); err != nil {
+			// stdout first: the (possibly rotated) token must reach the capture
+			// flow even when the cache write fails.
+			if err := writeJSON(rt.stdout, token); err != nil {
 				return err
 			}
-			return writeJSON(rt.stdout, token)
+			if err := session.CacheAccessToken(token); err != nil {
+				session.Warn(err)
+			}
+			return nil
 		},
 	}
 }

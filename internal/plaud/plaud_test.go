@@ -141,6 +141,31 @@ func TestSessionRefreshesAndCachesAccessToken(t *testing.T) {
 	}
 }
 
+// TestCacheFailureNeverHidesRotation makes the cache best-effort: with an
+// unwritable cache path the refreshed token is still returned, the rotation
+// notice still fires, and the write error surfaces through Warn.
+func TestCacheFailureNeverHidesRotation(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/refresh", func(w http.ResponseWriter, _ *http.Request) {
+		jsonResponse(w, 200, `{"access_token":"fresh","refresh_token":"rotated","expires_in":3600}`)
+	})
+	cfg := testConfig(t, mux)
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.CacheFile = filepath.Join(blocker, "access-token.json")
+	var rotated, warned bool
+	session := Session{Config: cfg, RefreshToken: "old", Rotated: func(Token) { rotated = true }, Warn: func(error) { warned = true }}
+	token, err := session.AccessToken(context.Background())
+	if err != nil || token != "fresh" {
+		t.Fatalf("AccessToken = %q, %v; want the refreshed token despite the cache failure", token, err)
+	}
+	if !rotated || !warned {
+		t.Errorf("rotated = %v, warned = %v; want both", rotated, warned)
+	}
+}
+
 func TestRefreshRejectedIsActionable(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/refresh", func(w http.ResponseWriter, _ *http.Request) {

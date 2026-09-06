@@ -33,11 +33,14 @@ var ErrNoRefreshToken = errors.New(RefreshTokenEnv + " is not set — run this c
 // Session resolves an access token for data calls: the cache when it is
 // still valid, otherwise a refresh with RefreshToken. Rotated is invoked when
 // the refresh answer carried a new refresh token, so the caller can shout
-// that the vault must be updated.
+// that the vault must be updated. Warn receives a failed cache write — the
+// cache is best-effort once the refresh succeeded, so a disk problem never
+// hides a rotation or fails the call.
 type Session struct {
 	Config       Config
 	RefreshToken string
 	Rotated      func(Token)
+	Warn         func(error)
 }
 
 // AccessToken returns a usable bearer token, refreshing and caching as needed.
@@ -53,11 +56,11 @@ func (s Session) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := s.CacheAccessToken(token); err != nil {
-		return "", err
-	}
 	if token.RefreshToken != "" && token.RefreshToken != s.RefreshToken && s.Rotated != nil {
 		s.Rotated(token)
+	}
+	if err := s.CacheAccessToken(token); err != nil && s.Warn != nil {
+		s.Warn(err)
 	}
 	return token.AccessToken, nil
 }
