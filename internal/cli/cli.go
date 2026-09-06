@@ -106,6 +106,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "operator" {
 		return rt.operatorApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "plaud" {
+		return rt.plaudApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -135,6 +138,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.reclaimCommand("reclaim"),
 		rt.handoffsCommand("handoffs"),
 		rt.operatorCommand("operator"),
+		rt.plaudCommand("plaud"),
 		rt.browseCommand(),
 	)
 	return root, nil

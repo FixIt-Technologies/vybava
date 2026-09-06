@@ -54,3 +54,7 @@ human scores. `docs/operator.md` documents its CLI and the human-only send rule.
 feedback contract; source scan time is separate from snapshot read time.
 `Store.View` reads the last atomic state publication without the scanner's writer
 lock; all mutations use `Store.With`. Both share the same state validation.
+
+`internal/plaud` reads the Plaud account directly (PKCE login, vault-injected
+refresh token, cached access token only); the manual-only skill is
+`skills/plaud/`. `docs/plaud.md` has the auth model and the API map.
