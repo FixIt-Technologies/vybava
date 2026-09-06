@@ -132,6 +132,9 @@ func TestSessionRefreshesAndCachesAccessToken(t *testing.T) {
 	if info, _ := os.Stat(cfg.CacheFile); info.Mode().Perm() != 0o600 {
 		t.Errorf("cache mode = %o, want 600", info.Mode().Perm())
 	}
+	if entries, _ := os.ReadDir(filepath.Dir(cfg.CacheFile)); len(entries) != 1 {
+		t.Errorf("cache dir holds %d entries, want only the cache file (temp file leaked)", len(entries))
+	}
 }
 
 func TestRefreshRejectedIsActionable(t *testing.T) {

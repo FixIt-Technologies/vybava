@@ -91,11 +91,21 @@ func CacheAccessToken(cfg Config, token Token) error {
 	if err := os.MkdirAll(filepath.Dir(cfg.CacheFile), 0o700); err != nil {
 		return fmt.Errorf("create cache directory: %w", err)
 	}
-	tmp := cfg.CacheFile + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+	// A private temp file per writer (os.CreateTemp: 0600, unique name) so
+	// concurrent applet processes never race on one shared .tmp inode.
+	tmp, err := os.CreateTemp(filepath.Dir(cfg.CacheFile), ".access-token-*.tmp")
+	if err != nil {
 		return fmt.Errorf("write access-token cache: %w", err)
 	}
-	if err := os.Rename(tmp, cfg.CacheFile); err != nil {
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write access-token cache: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("write access-token cache: %w", err)
+	}
+	if err := os.Rename(tmp.Name(), cfg.CacheFile); err != nil {
 		return fmt.Errorf("write access-token cache: %w", err)
 	}
 	return nil
