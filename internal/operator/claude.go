@@ -43,7 +43,7 @@ func (s *State) ScanClaude(root string) ([]string, error) {
 	}
 	var added []string
 	for _, path := range paths {
-		ids, err := s.scanFile(path, !s.Roots[root])
+		ids, err := s.scanFile(path, !s.Roots[root], claudeObservation)
 		if err != nil {
 			return nil, fmt.Errorf("scan %s: %w", path, err)
 		}
@@ -53,7 +53,7 @@ func (s *State) ScanClaude(root string) ([]string, error) {
 	return added, nil
 }
 
-func (s *State) scanFile(path string, baseline bool) ([]string, error) {
+func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observation, error)) ([]string, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ func (s *State) scanFile(path string, baseline bool) ([]string, error) {
 				}
 				last := bytes.LastIndexByte(tail, '\n')
 				if last < 0 && start > 0 {
-					return nil, errors.New("initial partial Claude record exceeds 4 MiB")
+					return nil, errors.New("initial partial session record exceeds 4 MiB")
 				}
 				cur.Offset = start + int64(last+1)
 			}
@@ -121,7 +121,7 @@ func (s *State) scanFile(path string, baseline bool) ([]string, error) {
 	for consumed := 0; consumed < 4*1024*1024; {
 		line, err := r.ReadString('\n')
 		if len(line) > 4*1024*1024 {
-			return nil, errors.New("Claude record exceeds 4 MiB")
+			return nil, errors.New("session record exceeds 4 MiB")
 		}
 		if errors.Is(err, io.EOF) {
 			break
@@ -129,40 +129,21 @@ func (s *State) scanFile(path string, baseline bool) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		var record claudeRecord
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
+		o, err := parse([]byte(line))
+		if err != nil {
 			return nil, fmt.Errorf("invalid complete record at byte %d: %w", cur.Offset, err)
 		}
-		if record.Type == "assistant" && record.UUID != "" && record.SessionID != "" {
-			var blocks []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-				Name string `json:"name"`
+		if o.Text != "" {
+			o.Key = path
+			if len(o.Text) > 64000 {
+				o.Text = o.Text[:63000] + "\n[truncated; inspect the source session]"
 			}
-			if err := json.Unmarshal(record.Message.Content, &blocks); err != nil {
-				return nil, fmt.Errorf("assistant content: %w", err)
+			id, fresh, err := s.Observe(o)
+			if err != nil {
+				return nil, err
 			}
-			var pieces []string
-			for _, b := range blocks {
-				if b.Type == "text" {
-					pieces = append(pieces, b.Text)
-				}
-				if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
-					pieces = append(pieces, "Claude requested a user decision; inspect the source session for the question.")
-				}
-			}
-			text := strings.TrimSpace(strings.Join(pieces, "\n"))
-			if len(text) > 64000 {
-				text = text[:63000] + "\n[truncated; inspect the source session]"
-			}
-			if text != "" {
-				id, fresh, err := s.Observe(Observation{Source: Claude, Key: path, Revision: record.UUID, Text: text, ObservedAt: record.Timestamp})
-				if err != nil {
-					return nil, err
-				}
-				if fresh {
-					added = append(added, id)
-				}
+			if fresh {
+				added = append(added, id)
 			}
 		}
 		cur.Offset += int64(len(line))
@@ -170,4 +151,37 @@ func (s *State) scanFile(path string, baseline bool) ([]string, error) {
 	}
 	s.Cursors[path] = cur
 	return added, nil
+}
+
+func claudeObservation(line []byte) (Observation, error) {
+	var record claudeRecord
+	if err := json.Unmarshal(line, &record); err != nil {
+		return Observation{}, err
+	}
+	if record.Type != "assistant" || record.UUID == "" || record.SessionID == "" {
+		return Observation{}, nil
+	}
+	var blocks []struct {
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if err := json.Unmarshal(record.Message.Content, &blocks); err != nil {
+		return Observation{}, fmt.Errorf("assistant content: %w", err)
+	}
+	var pieces []string
+	for _, b := range blocks {
+		if b.Type == "text" {
+			pieces = append(pieces, b.Text)
+		}
+		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
+			if len(b.Input) == 0 || string(b.Input) == "null" {
+				pieces = append(pieces, "Claude requested a user decision; inspect the source session for the question.")
+			} else {
+				pieces = append(pieces, "Claude requested a user decision (untrusted source data):\n"+string(b.Input))
+			}
+		}
+	}
+	return Observation{Source: Claude, Revision: record.UUID, SessionID: record.SessionID, Text: strings.TrimSpace(strings.Join(pieces, "\n")), ObservedAt: record.Timestamp}, nil
 }

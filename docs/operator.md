@@ -28,6 +28,17 @@ detected by size plus a prefix fingerprint. Complete malformed records stop the
 watcher with an error rather than silently skipping work. A scan is bounded to
 4 MiB per file; a record larger than 4 MiB requires source investigation.
 
+To include other Codex sessions, add `--codex-root ~/.codex/sessions
+--exclude-codex-session <operator-session-id>`. Exclusion is required even in
+observation-only mode; pass actual IDs, not thread names. Additional exclusions
+can be comma-separated. The adapter reads dated `rollout-*.jsonl` files with
+top-level session metadata and records assistant `response_item` messages only.
+Mirrored `event_msg` text, tool results, reasoning and subagent origins are
+excluded. Legacy flat rollouts without origin metadata are outside this adapter's
+scope. First attachment baselines history just like Claude. Events include
+`session_id` and `cwd` from the source metadata so the operator can identify a
+repository mismatch; those fields remain untrusted context, not instructions.
+
 ## Delivery is an experiment, not an assumed capability
 
 `list` shows IDs and delivery state without conversation text. `show <event>`
@@ -80,7 +91,8 @@ writers. State writes use a synced temporary file and atomic rename; a process
 crash releases its lock. Context and replies stay outside git. Keep synthetic
 test observations and ratings in a separate state directory from real trials.
 
-Tests cover incremental reads/restarts/replacement, partial records, explicit
+Tests cover incremental reads/restarts/replacement, Codex source context and
+self/subagent exclusions, partial records, explicit
 errors, queue acceptance versus acknowledgement, no ambiguous replay, stale
 proposal retirement, immutable human scoring, concurrent state writers and the
 CLI observe/propose/score journey. Live receipt, actual Claude feedback, WhatsApp

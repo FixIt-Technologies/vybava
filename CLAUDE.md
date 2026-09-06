@@ -45,6 +45,6 @@ Run verification remotely with `devbox run verify` using `devbox.yaml`. Its
 atomic file writes, and empty-directory cleanup; rendering stays in
 `internal/codexsync/codexsync.go`. See `docs/codexsync.md` for ownership rules.
 
-`internal/operator` owns the local Codex operator trial: incremental Claude
+`internal/operator` owns the local Codex operator trial: incremental Claude/Codex
 observations, durable delivery receipts, revision-bound proposals and actual
 human scores. `docs/operator.md` documents its CLI and the human-only send rule.

@@ -19,6 +19,7 @@ type Source string
 
 const (
 	Claude   Source = "claude"
+	Codex    Source = "codex"
 	WhatsApp Source = "whatsapp"
 )
 
@@ -28,6 +29,8 @@ type Observation struct {
 	Revision   string    `json:"revision"`
 	Text       string    `json:"text"`
 	ObservedAt time.Time `json:"observed_at"`
+	SessionID  string    `json:"session_id,omitempty"`
+	Cwd        string    `json:"cwd,omitempty"`
 }
 
 type Rating struct {
@@ -151,8 +154,8 @@ func digest(text string) string {
 }
 
 func (s *State) Observe(o Observation) (string, bool, error) {
-	if o.Source != Claude && o.Source != WhatsApp {
-		return "", false, errors.New("source must be claude or whatsapp")
+	if o.Source != Claude && o.Source != Codex && o.Source != WhatsApp {
+		return "", false, errors.New("source must be claude, codex or whatsapp")
 	}
 	if strings.TrimSpace(o.Key) == "" || strings.TrimSpace(o.Revision) == "" || strings.TrimSpace(o.Text) == "" {
 		return "", false, errors.New("key, revision and text are required")

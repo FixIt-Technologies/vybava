@@ -20,6 +20,9 @@ func TestOperatorObserveProposeScoreJourney(t *testing.T) {
 		err = cmd.Execute()
 		return out.String(), err
 	}
+	if _, err := run("", "watch", "--once", "--codex-root", t.TempDir()); err == nil || !strings.Contains(err.Error(), "--exclude-codex-session") {
+		t.Fatalf("Codex observation did not require self-exclusion: %v", err)
+	}
 	out, err := run(`{"source":"whatsapp","key":"fixture-only","revision":"1","text":"Are we meeting at ten?"}`, "observe")
 	if err != nil {
 		t.Fatal(err)

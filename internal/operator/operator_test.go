@@ -235,6 +235,17 @@ func TestClaudePartialAtFirstAttachAndMalformedRecord(t *testing.T) {
 	}
 }
 
+func TestClaudeDecisionObservationRetainsQuestionAndOptions(t *testing.T) {
+	line := `{"type":"assistant","uuid":"decision","sessionId":"claude-session","message":{"content":[{"type":"tool_use","name":"AskUserQuestion","input":{"questions":[{"question":"Merge PR 558?","options":[{"label":"Merge now"},{"label":"Wait"}]}]}}]}}`
+	o, err := claudeObservation([]byte(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(o.Text, "Merge PR 558?") || !strings.Contains(o.Text, "Wait") || !strings.Contains(o.Text, "untrusted source data") {
+		t.Fatalf("lost the decision context: %s", o.Text)
+	}
+}
+
 func TestPrivateStoreSerializesConcurrentWriters(t *testing.T) {
 	s := testStore(t)
 	var wg sync.WaitGroup

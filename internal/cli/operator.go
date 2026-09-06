@@ -215,12 +215,16 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 		}{args[0]})
 	}}
 	deliver.Flags().StringVar(&thread, "thread", "", "target Codex thread ID or exact name")
-	var root, watchThread string
+	var root, codexRoot, watchThread string
+	var excludedCodex []string
 	var interval time.Duration
 	var once bool
-	watch := &cobra.Command{Use: "watch", Short: "Observe new Claude activity; optionally queue new events to Codex", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	watch := &cobra.Command{Use: "watch", Short: "Observe new Claude and optional Codex activity; optionally queue events to Codex", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if interval < time.Second {
 			return errors.New("interval must be at least 1s")
+		}
+		if codexRoot != "" && len(excludedCodex) == 0 {
+			return errors.New("--codex-root requires --exclude-codex-session with the operator's actual session ID")
 		}
 		s, err := store()
 		if err != nil {
@@ -229,6 +233,12 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 		root, err = expandHome(root)
 		if err != nil {
 			return err
+		}
+		if codexRoot != "" {
+			codexRoot, err = expandHome(codexRoot)
+			if err != nil {
+				return err
+			}
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -243,6 +253,13 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 				added, err = state.ScanClaude(root)
 				if err != nil {
 					return err
+				}
+				if codexRoot != "" {
+					ids, err := state.ScanCodex(codexRoot, excludedCodex)
+					if err != nil {
+						return err
+					}
+					added = append(added, ids...)
 				}
 				next, pending = state.NextDelivery(), state.Summary().Pending
 				return nil
@@ -277,6 +294,8 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 		}
 	}}
 	watch.Flags().StringVar(&root, "claude-root", "~/.claude/projects", "Claude projects directory (top-level session logs only)")
+	watch.Flags().StringVar(&codexRoot, "codex-root", "", "optional Codex sessions directory; existing history is baselined")
+	watch.Flags().StringSliceVar(&excludedCodex, "exclude-codex-session", nil, "Codex session IDs to exclude; must include the operator itself")
 	watch.Flags().StringVar(&watchThread, "thread", "", "optional Codex target; omit to observe without dispatch")
 	watch.Flags().DurationVar(&interval, "interval", 5*time.Second, "scan interval")
 	watch.Flags().BoolVar(&once, "once", false, "perform one scan then exit")
