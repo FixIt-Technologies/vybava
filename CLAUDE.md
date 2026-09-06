@@ -50,3 +50,7 @@ atomic file writes, and empty-directory cleanup; rendering stays in
 `internal/operator` owns the local Codex operator trial: incremental Claude/Codex
 observations, durable delivery receipts, revision-bound proposals and actual
 human scores. `docs/operator.md` documents its CLI and the human-only send rule.
+
+`internal/plaud` reads the Plaud account directly (PKCE login, vault-injected
+refresh token, cached access token only); the manual-only skill is
+`skills/plaud/`. `docs/plaud.md` has the auth model and the API map.
