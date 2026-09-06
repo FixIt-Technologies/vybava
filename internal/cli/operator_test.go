@@ -239,4 +239,24 @@ func TestOperatorSelectiveWatchJourney(t *testing.T) {
 	if strings.Count(got, "\n") != 1 || !strings.Contains(got, "fixture-thread") || !strings.Contains(got, "operator show") || strings.Contains(got, "PRIVATE") {
 		t.Fatalf("unexpected queue envelope: %s", got)
 	}
+	store := operator.Store{Dir: dir}
+	if err := store.View(func(state *operator.State) error {
+		found := false
+		for _, event := range state.Events {
+			if event.Revision == "question" {
+				found = true
+				if event.Delivery != "queued" || !strings.Contains(got, `"event":"`+event.ID+`"`) {
+					t.Fatal("queue reference does not identify the intended question")
+				}
+			} else if event.Delivery != "pending" {
+				t.Fatalf("suppressed source %s was submitted", event.Revision)
+			}
+		}
+		if !found {
+			t.Fatal("intended question missing from state")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
