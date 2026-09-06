@@ -50,6 +50,10 @@ atomic file writes, and empty-directory cleanup; rendering stays in
 `internal/operator` owns the local Codex operator trial: incremental Claude/Codex
 observations, durable delivery receipts, revision-bound proposals and actual
 human scores. `docs/operator.md` documents its CLI and the human-only send rule.
+`internal/operator/companion.go` owns the native companion snapshot and free-text
+feedback contract; source scan time is separate from snapshot read time.
+`Store.View` reads the last atomic state publication without the scanner's writer
+lock; all mutations use `Store.With`. Both share the same state validation.
 
 `internal/plaud` reads the Plaud account directly (PKCE login, vault-injected
 refresh token, cached access token only); the manual-only skill is
