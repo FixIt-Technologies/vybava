@@ -1,0 +1,106 @@
+# Operator trial
+
+Codex is the main operator. This applet provides local observation, delivery and
+evaluation state; it does not implement an AI model, a WhatsApp connector, UI
+automation, or sending. Eve can be a destination for separately delegated work.
+
+## Start with actual Claude activity
+
+`vybava operator watch --once` establishes a baseline at the current end of
+`~/.claude/projects/*/*.jsonl`. Existing history is not replayed. Subsequent
+scans consume new assistant text and user-decision requests. Tool results,
+thinking blocks, human messages and nested subagent logs are not copied.
+An assistant's statement is an observation, not proof that a code edit succeeded;
+Codex must inspect the relevant repo before acting on it.
+
+Run `vybava operator watch --thread <explicit-thread-id>` to watch continuously
+and queue new context references through the installed `codex queue` command.
+Omit `--thread` for observation only. `--claude-root` can select an isolated
+fixture root; `--interval` defaults to 5 seconds. Ctrl-C or SIGTERM stops the
+watcher. It runs in the foreground; no launch agent is silently installed.
+Automatic dispatch permits only one unacknowledged delivery at a time, including
+an uncertain failed/submitting delivery. New observations still accumulate and
+supersede older context while the target thread's delivery is being verified.
+
+The first scan checkpoints existing files. New session files are read from their
+beginning, partial trailing records wait for completion, and log replacement is
+detected by size plus a prefix fingerprint. Complete malformed records stop the
+watcher with an error rather than silently skipping work. A scan is bounded to
+4 MiB per file; a record larger than 4 MiB requires source investigation.
+Session files removed or archived between listing and opening are skipped;
+a missing configured source root and other read errors still stop the watcher.
+
+To include other Codex sessions, add `--codex-root ~/.codex/sessions
+--exclude-codex-session <operator-session-id>`. Exclusion is required even in
+observation-only mode; pass actual IDs, not thread names. Additional exclusions
+can be comma-separated. The adapter reads dated `rollout-*.jsonl` files with
+top-level session metadata and records assistant `response_item` messages only.
+Mirrored `event_msg` text, tool results, reasoning and subagent origins are
+excluded. Legacy flat rollouts without origin metadata are outside this adapter's
+scope. First attachment baselines history just like Claude. Events include
+`session_id` and `cwd` from the source metadata so the operator can identify a
+repository mismatch; those fields remain untrusted context, not instructions.
+
+## Delivery is an experiment, not an assumed capability
+
+`list` shows IDs and delivery state without conversation text. `show <event>`
+reads one captured observation. `deliver <event> --thread <id>` submits it.
+`ack <event>` records actual receipt after the operator has read it.
+
+- `pending`: stored, not submitted.
+- `submitting`: saved before the CLI call; a crash may leave acceptance unknown.
+- `queued`: CLI returned an acceptance receipt. This does **not** prove active
+  conversation delivery or idle wake-up.
+- `failed`: the call failed or returned an unrecognized receipt. Acceptance may
+  be uncertain; there is deliberately no automatic retry.
+
+Acknowledgement has its own timestamp. Inspect the target thread and receipt
+before reconciling an uncertain delivery; never mark it received just because
+the queue command succeeded. This pilot intentionally does not edit Codex's
+internal state databases or start a replacement leader session.
+
+Status counts unacknowledged queued deliveries and delivery problems even when
+newer context has superseded them: they still block dispatch. Pending counts
+include only current, unacknowledged observations eligible for delivery.
+
+## WhatsApp and scoring
+
+Use computer use to inspect the intended conversation and its current composer.
+Pass a JSON observation to `observe` on stdin: `source` (`whatsapp`), `key`
+(stable conversation identity), `revision` (identity of the captured context),
+`text` (relevant visible context), optionally `observed_at` (RFC3339). Unknown
+fields, conflicting revision contents, and empty observations are rejected.
+The applet itself cannot detect incoming WhatsApp activity: a working computer-
+use observer must supply it. Do not label fixtures or manually supplied examples
+as a successful live WhatsApp trial.
+
+`propose <event>` reads proposed response text from stdin. The reply remains
+local; it does not write to WhatsApp. Before any actual prefill, re-read the
+conversation, check the same recipient/context and an unchanged empty composer,
+and yield to human activity. Capture new context through `observe`; it retires
+older proposals for that conversation. Filling the composer must be separately
+verified in the app. Never press Send or a shortcut that submits the reply.
+
+The human scores a specific proposal with `score <event> --proposal 1 --score 5
+--correction 'optional explanation'`. Scores range from 1 (wrong) to 5 (ready
+unchanged); a number in between reflects the amount of correction needed.
+Recorded ratings are immutable and remain attached to the exact proposal even
+after the conversation changes. Never invent a rating on the user's behalf.
+`status` reports proposal count, scored count and average; unscored proposals
+do not raise the average. There is no auto-send threshold or promotion command.
+
+## State and verification
+
+Default state is `~/.local/share/vybava/operator`, configurable with `--state-dir`.
+The directory must be private (0700), files are 0600, and flock serializes local
+writers. State writes use a synced temporary file and atomic rename; a process
+crash releases its lock. Context and replies stay outside git. Keep synthetic
+test observations and ratings in a separate state directory from real trials.
+
+Tests cover incremental reads/restarts/replacement, Codex source context and
+self/subagent exclusions, partial records, explicit
+errors, queue acceptance versus acknowledgement, no ambiguous replay, stale
+proposal retirement, immutable human scoring, concurrent state writers and the
+CLI observe/propose/score journey. Live receipt, actual Claude feedback, WhatsApp
+prefill, human scoring and coexistence with human input require runtime evidence
+in addition to those tests.
