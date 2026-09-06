@@ -121,13 +121,17 @@ func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observa
 	if _, err := f.Seek(cur.Offset, io.SeekStart); err != nil {
 		return nil, err
 	}
-	r := bufio.NewReader(io.LimitReader(f, 4*1024*1024+1))
+	const sweepBudget = 4 * 1024 * 1024
+	const recordLimit = 16 * 1024 * 1024
+	// A sweep may finish one record past its budget. Codex compaction records
+	// can exceed 4 MiB even though they produce no operator observation.
+	r := bufio.NewReader(io.LimitReader(f, sweepBudget+recordLimit+1))
 	var added []string
 	// Bound one sweep; remaining complete records are picked up next time.
-	for consumed := 0; consumed < 4*1024*1024; {
+	for consumed := 0; consumed < sweepBudget; {
 		line, err := r.ReadString('\n')
-		if len(line) > 4*1024*1024 {
-			return nil, errors.New("session record exceeds 4 MiB")
+		if len(line) > recordLimit {
+			return nil, errors.New("session record exceeds 16 MiB")
 		}
 		if errors.Is(err, io.EOF) {
 			break

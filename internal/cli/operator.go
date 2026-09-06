@@ -60,7 +60,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			return err
 		}
 		var summary operator.Summary
-		if err := s.With(func(state *operator.State) error { summary = state.Summary(); return nil }); err != nil {
+		if err := s.View(func(state *operator.State) error { summary = state.Summary(); return nil }); err != nil {
 			return err
 		}
 		if rt.json {
@@ -83,7 +83,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			Proposals    int             `json:"proposals"`
 		}
 		rows := []row{}
-		if err := s.With(func(state *operator.State) error {
+		if err := s.View(func(state *operator.State) error {
 			for _, e := range state.Events {
 				rows = append(rows, row{e.ID, e.Source, e.Delivery, e.Superseded, e.AcknowledgedAt != nil, len(e.Proposals)})
 			}
@@ -107,7 +107,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			return err
 		}
 		var event operator.Event
-		if err := s.With(func(state *operator.State) error {
+		if err := s.View(func(state *operator.State) error {
 			e, err := state.Find(args[0])
 			if err == nil {
 				event = *e
@@ -191,6 +191,35 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 	rate.Flags().IntVar(&score, "score", 0, "human correctness score, 1 (wrong) to 5 (ready unchanged)")
 	rate.Flags().IntVar(&proposal, "proposal", 0, "explicit proposal number from show (starts at 1)")
 	rate.Flags().StringVar(&correction, "correction", "", "optional human correction or explanation")
+	snapshot := &cobra.Command{Use: "snapshot", Short: "Read prepared work and last successful source scan for a local companion", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		var result operator.CompanionSnapshot
+		if err := s.View(func(state *operator.State) error { result = state.Snapshot(); return nil }); err != nil {
+			return err
+		}
+		return output(result)
+	}}
+	var feedbackProposal int
+	feedback := &cobra.Command{Use: "feedback EVENT", Short: "Record actual human feedback from stdin without assigning a score", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		text, err := readInput()
+		if err != nil {
+			return err
+		}
+		if err := s.With(func(state *operator.State) error { return state.AddFeedback(args[0], feedbackProposal, text) }); err != nil {
+			return err
+		}
+		return output(struct {
+			Event string `json:"feedback_recorded"`
+		}{args[0]})
+	}}
+	feedback.Flags().IntVar(&feedbackProposal, "proposal", 0, "explicit proposal number from show (starts at 1)")
 	queue := func(ctx context.Context, thread, message string) (string, error) {
 		b, err := exec.CommandContext(ctx, "codex", "queue", "--thread", thread, "--message", message).CombinedOutput()
 		if err != nil {
@@ -262,6 +291,8 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 					added = append(added, ids...)
 				}
 				next, pending = state.NextDelivery(), state.Summary().Pending
+				now := time.Now().UTC()
+				state.LastScanAt = &now
 				return nil
 			}); err != nil {
 				return err
@@ -299,6 +330,6 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 	watch.Flags().StringVar(&watchThread, "thread", "", "optional Codex target; omit to observe without dispatch")
 	watch.Flags().DurationVar(&interval, "interval", 5*time.Second, "scan interval")
 	watch.Flags().BoolVar(&once, "once", false, "perform one scan then exit")
-	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch)
+	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback)
 	return c
 }
