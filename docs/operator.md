@@ -59,6 +59,10 @@ before reconciling an uncertain delivery; never mark it received just because
 the queue command succeeded. This pilot intentionally does not edit Codex's
 internal state databases or start a replacement leader session.
 
+Status counts unacknowledged queued deliveries and delivery problems even when
+newer context has superseded them: they still block dispatch. Pending counts
+include only current, unacknowledged observations eligible for delivery.
+
 ## WhatsApp and scoring
 
 Use computer use to inspect the intended conversation and its current composer.

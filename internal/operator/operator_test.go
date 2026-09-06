@@ -133,6 +133,38 @@ func TestNextDeliveryWaitsForReceiptEvenAfterContextChanges(t *testing.T) {
 	}
 }
 
+func TestSummaryShowsOutstandingDeliveryAfterContextChanges(t *testing.T) {
+	for _, delivery := range []string{"queued", "submitting", "failed"} {
+		t.Run(delivery, func(t *testing.T) {
+			state := State{Events: []Event{
+				{ID: "old", Delivery: delivery, Superseded: true},
+				{ID: "new", Delivery: "pending"},
+			}}
+			wantQueued, wantProblems := 0, 1
+			if delivery == "queued" {
+				wantQueued, wantProblems = 1, 0
+			}
+			summary := state.Summary()
+			if state.NextDelivery() != "" || summary.Pending != 1 || summary.Queued != wantQueued || summary.DeliveryProblems != wantProblems {
+				t.Fatalf("status hid an outstanding delivery: %+v", summary)
+			}
+			if err := state.Acknowledge("old"); err != nil {
+				t.Fatal(err)
+			}
+			summary = state.Summary()
+			if state.NextDelivery() != "new" || summary.Queued != 0 || summary.DeliveryProblems != 0 {
+				t.Fatalf("acknowledged delivery still reported as outstanding: %+v", summary)
+			}
+			if err := state.Acknowledge("new"); err != nil {
+				t.Fatal(err)
+			}
+			if summary = state.Summary(); state.NextDelivery() != "" || summary.Pending != 0 {
+				t.Fatalf("acknowledged observation still pending: %+v", summary)
+			}
+		})
+	}
+}
+
 func claudeLine(id, text string) string {
 	data, _ := json.Marshal(struct {
 		Type    string `json:"type"`

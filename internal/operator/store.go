@@ -283,14 +283,14 @@ func (s *State) Summary() Summary {
 		if e.AcknowledgedAt != nil {
 			r.Acknowledged++
 		}
-		if !e.Superseded {
+		if e.AcknowledgedAt == nil {
 			switch e.Delivery {
 			case "pending":
-				r.Pending++
-			case "queued":
-				if e.AcknowledgedAt == nil {
-					r.Queued++
+				if !e.Superseded {
+					r.Pending++
 				}
+			case "queued":
+				r.Queued++
 			case "submitting", "failed":
 				r.DeliveryProblems++
 			}
