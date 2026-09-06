@@ -36,6 +36,20 @@ func TestOperatorObserveProposeScoreJourney(t *testing.T) {
 	if _, err := run("Ten works for me.", "propose", observed.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := run("Good wording; leave it unsent.", "feedback", observed.ID, "--proposal", "1"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run("", "snapshot")
+	if err != nil || !strings.Contains(out, "Good wording; leave it unsent.") || !strings.Contains(out, `"scored": 0`) {
+		t.Fatalf("qualitative feedback did not survive snapshot: %s: %v", out, err)
+	}
+	if _, err := run("", "watch", "--once", "--claude-root", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run("", "snapshot")
+	if err != nil || !strings.Contains(out, `"last_scan_at":`) {
+		t.Fatalf("source scan missing: %s: %v", out, err)
+	}
 	if _, err := run("", "score", observed.ID, "--proposal", "1", "--score", "5"); err != nil {
 		t.Fatal(err)
 	}

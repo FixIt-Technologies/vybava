@@ -25,8 +25,10 @@ supersede older context while the target thread's delivery is being verified.
 The first scan checkpoints existing files. New session files are read from their
 beginning, partial trailing records wait for completion, and log replacement is
 detected by size plus a prefix fingerprint. Complete malformed records stop the
-watcher with an error rather than silently skipping work. A scan is bounded to
-4 MiB per file; a record larger than 4 MiB requires source investigation.
+watcher with an error rather than silently skipping work. A scan processes a
+4 MiB budget per file, finishing one record across that boundary (up to 16 MiB
+per record). This accommodates observed Codex compaction records above 5 MB;
+records larger than 16 MiB still require source investigation.
 Session files removed or archived between listing and opening are skipped;
 a missing configured source root and other read errors still stop the watcher.
 
@@ -73,6 +75,26 @@ fields, conflicting revision contents, and empty observations are rejected.
 The applet itself cannot detect incoming WhatsApp activity: a working computer-
 use observer must supply it. Do not label fixtures or manually supplied examples
 as a successful live WhatsApp trial.
+
+## Local companion
+
+`snapshot --json` returns a versioned, consistent view of events with prepared
+responses, including superseded history, human feedback, summary counts and the
+last successful source scan. `checked_at` is the view read time; `last_scan_at`
+is updated only by a successful watcher scan. A readable snapshot is not evidence
+that the watcher or Codex is working. A scan older than 30 seconds is displayed as
+potentially stopped by the native companion. WhatsApp is still manually observed.
+
+`feedback EVENT --proposal N` accepts the human's words on stdin without assigning
+a numeric score. Feedback is append-only and attached to that exact proposal,
+including after its source context changes. Neither feedback nor a rating sends
+or approves anything in the source app.
+
+Companion builds upgrade state v1 to v2 under the normal lock. Stop old watcher
+processes and retain a private backup before upgrading a live trial. Upgrade all
+CLI entry points used for that trial together: old binaries deliberately reject
+v2 instead of dropping its new feedback and scan fields. Do not downgrade by
+editing the version. The snapshot wire contract has its own independent version 1.
 
 `propose <event>` reads proposed response text from stdin. The reply remains
 local; it does not write to WhatsApp. Before any actual prefill, re-read the
