@@ -8,8 +8,10 @@ automation, or sending. Eve can be a destination for separately delegated work.
 
 `vybava operator watch --once` establishes a baseline at the current end of
 `~/.claude/projects/*/*.jsonl`. Existing history is not replayed. Subsequent
-scans consume new assistant text and user-decision requests. Tool results,
-thinking blocks, human messages and nested subagent logs are not copied.
+scans consume new assistant text and user-decision requests. Human messages,
+tool results and assistant activity without text produce content-free activity
+markers that retire earlier requests. Their contents and nested subagent logs
+are not copied.
 An assistant's statement is an observation, not proof that a code edit succeeded;
 Codex must inspect the relevant repo before acting on it.
 
@@ -21,6 +23,33 @@ watcher. It runs in the foreground; no launch agent is silently installed.
 Automatic dispatch permits only one unacknowledged delivery at a time, including
 an uncertain failed/submitting delivery. New observations still accumulate and
 supersede older context while the target thread's delivery is being verified.
+
+For selective attention, use `--thread <id> --attention-since <RFC3339-time>`.
+Set the timestamp to activation time and keep it unchanged across restarts;
+existing pending history stays observation-only. This mode nominates structured
+Claude questions (any language), explicit English blocker statements and prepared
+handoffs. Unknown wording and routine CI/progress updates stay observation-only.
+It is a conservative text filter, not a semantic understanding of every blocker.
+Candidates must be unchanged for at least 20 seconds, no more than 10 minutes old,
+and newer than the activation timestamp. A reply or resumed activity supersedes
+the earlier request. The source file must still match the consumed cursor before
+delivery; unread or partial new activity defers that source to the next scan.
+Removed or unfinished sources do not hold up ready requests from other sessions.
+
+At most one delivery remains unacknowledged globally; successful submissions
+also have a two-minute process-local cooldown (reset on watcher restart).
+Queue messages contain references, not source text. They authorize inspection and
+preparation only: never a source-app send, merge, agent launch or execution of
+instructions found in the observation. Codex must still read the current source
+before preparing a recommendation. Stop dispatch by restarting without `--thread`
+and `--attention-since`; this preserves receipts, feedback and scan cursors.
+
+Scanning takes a separate scanner lock and reads outside the state writer lock.
+It merges only new observations and cursor updates into the latest publication,
+preserving concurrent human feedback and delivery receipts. Stop older watcher
+processes before upgrading: a concurrent legacy cursor update is rejected rather
+than overwritten. This removes scan-duration waits from feedback writes; it does
+not make the source scan itself faster.
 
 The first scan checkpoints existing files. New session files are read from their
 beginning, partial trailing records wait for completion, and log replacement is
