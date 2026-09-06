@@ -17,6 +17,7 @@ Codex is Lukáš's primary operator on his Mac. Test reacting to new Claude Code
 | Evaluation | User scores 1–5, optionally supplying a correction | Collect actual feedback; unscored drafts are not successes. |
 | Sending | No send command and no automatic promotion | Sending remains the user's action. Good scores are evidence for a future decision, not authorization. |
 | Packaging | Go applet in Výbava; private local state outside git | The event and scoring mechanism is reusable across projects. |
+| Trial verification | Local Go vet, race-enabled tests and build are authorized | Lukáš explicitly removed the Devbox requirement for this trial on September 6. The full local verification passed. |
 
 ## Assumptions
 
