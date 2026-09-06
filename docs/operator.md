@@ -27,6 +27,8 @@ beginning, partial trailing records wait for completion, and log replacement is
 detected by size plus a prefix fingerprint. Complete malformed records stop the
 watcher with an error rather than silently skipping work. A scan is bounded to
 4 MiB per file; a record larger than 4 MiB requires source investigation.
+Session files removed or archived between listing and opening are skipped;
+a missing configured source root and other read errors still stop the watcher.
 
 To include other Codex sessions, add `--codex-root ~/.codex/sessions
 --exclude-codex-session <operator-session-id>`. Exclusion is required even in

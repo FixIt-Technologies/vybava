@@ -78,6 +78,9 @@ func (s *State) ScanCodex(root string, excluded []string) ([]string, error) {
 
 func readCodexMetadata(path string) (codexMetadata, error) {
 	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return codexMetadata{}, nil // rollout was archived after listing
+	}
 	if err != nil {
 		return codexMetadata{}, err
 	}
@@ -85,6 +88,9 @@ func readCodexMetadata(path string) (codexMetadata, error) {
 		return codexMetadata{}, nil
 	}
 	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return codexMetadata{}, nil
+	}
 	if err != nil {
 		return codexMetadata{}, err
 	}

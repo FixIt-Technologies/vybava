@@ -246,6 +246,22 @@ func TestClaudeDecisionObservationRetainsQuestionAndOptions(t *testing.T) {
 	}
 }
 
+func TestRemovedSessionDoesNotStopObservation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "removed-session.jsonl")
+	state := State{Cursors: map[string]Cursor{}}
+	ids, err := state.scanFile(path, false, claudeObservation)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("removed session interrupted scan: %v, %v", ids, err)
+	}
+	meta, err := readCodexMetadata(path)
+	if err != nil || meta.ID != "" {
+		t.Fatalf("removed rollout interrupted metadata read: %+v, %v", meta, err)
+	}
+	if _, err := state.ScanClaude(path); err == nil {
+		t.Fatal("missing configured source root was silently ignored")
+	}
+}
+
 func TestPrivateStoreSerializesConcurrentWriters(t *testing.T) {
 	s := testStore(t)
 	var wg sync.WaitGroup

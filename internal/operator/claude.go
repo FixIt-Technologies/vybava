@@ -55,6 +55,9 @@ func (s *State) ScanClaude(root string) ([]string, error) {
 
 func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observation, error)) ([]string, error) {
 	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil // session was removed after the directory listing
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +65,9 @@ func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observa
 		return nil, nil
 	}
 	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil // session was removed between stat and open
+	}
 	if err != nil {
 		return nil, err
 	}
