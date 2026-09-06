@@ -248,7 +248,16 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 	var excludedCodex []string
 	var interval time.Duration
 	var once bool
+	var attentionSince string
 	watch := &cobra.Command{Use: "watch", Short: "Observe new Claude and optional Codex activity; optionally queue events to Codex", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		var since time.Time
+		if attentionSince != "" {
+			var err error
+			since, err = time.Parse(time.RFC3339, attentionSince)
+			if err != nil || watchThread == "" {
+				return errors.New("--attention-since requires an RFC3339 timestamp and --thread")
+			}
+		}
 		if interval < time.Second {
 			return errors.New("interval must be at least 1s")
 		}
@@ -273,33 +282,38 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 		defer stop()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
+		var nextDispatch time.Time
 		for {
-			var added []string
 			var next string
 			var pending int
-			if err := s.With(func(state *operator.State) error {
-				var err error
-				added, err = state.ScanClaude(root)
-				if err != nil {
-					return err
-				}
-				if codexRoot != "" {
-					ids, err := state.ScanCodex(codexRoot, excludedCodex)
-					if err != nil {
-						return err
-					}
-					added = append(added, ids...)
-				}
+			added, err := s.Scan(root, codexRoot, excludedCodex)
+			if err != nil {
+				return err
+			}
+			if err := s.View(func(state *operator.State) error {
 				next, pending = state.NextDelivery(), state.Summary().Pending
-				now := time.Now().UTC()
-				state.LastScanAt = &now
+				if !since.IsZero() {
+					next = state.NextAttention(since, time.Now())
+					if time.Now().Before(nextDispatch) {
+						next = ""
+					}
+				}
 				return nil
 			}); err != nil {
 				return err
 			}
 			if watchThread != "" && next != "" {
-				if err := s.Deliver(ctx, next, watchThread, queue); err != nil {
+				var err error
+				if since.IsZero() {
+					err = s.Deliver(ctx, next, watchThread, queue)
+				} else {
+					err = s.DeliverAttention(ctx, next, watchThread, since, queue)
+				}
+				if err != nil && !errors.Is(err, operator.ErrAttentionChanged) {
 					return err
+				}
+				if err == nil {
+					nextDispatch = time.Now().Add(2 * time.Minute)
 				}
 			}
 			if once || len(added) > 0 {
@@ -328,6 +342,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 	watch.Flags().StringVar(&codexRoot, "codex-root", "", "optional Codex sessions directory; existing history is baselined")
 	watch.Flags().StringSliceVar(&excludedCodex, "exclude-codex-session", nil, "Codex session IDs to exclude; must include the operator itself")
 	watch.Flags().StringVar(&watchThread, "thread", "", "optional Codex target; omit to observe without dispatch")
+	watch.Flags().StringVar(&attentionSince, "attention-since", "", "only recent, settled Claude questions/blockers/handoffs after this RFC3339 timestamp; requires --thread")
 	watch.Flags().DurationVar(&interval, "interval", 5*time.Second, "scan interval")
 	watch.Flags().BoolVar(&once, "once", false, "perform one scan then exit")
 	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback)

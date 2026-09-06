@@ -17,6 +17,7 @@ type claudeRecord struct {
 	Type      string    `json:"type"`
 	UUID      string    `json:"uuid"`
 	SessionID string    `json:"sessionId"`
+	Cwd       string    `json:"cwd"`
 	Timestamp time.Time `json:"timestamp"`
 	Message   struct {
 		Content json.RawMessage `json:"content"`
@@ -168,7 +169,17 @@ func claudeObservation(line []byte) (Observation, error) {
 	if err := json.Unmarshal(line, &record); err != nil {
 		return Observation{}, err
 	}
-	if record.Type != "assistant" || record.UUID == "" || record.SessionID == "" {
+	if record.UUID == "" || record.SessionID == "" {
+		return Observation{}, nil
+	}
+	o := Observation{Source: Claude, Revision: record.UUID, SessionID: record.SessionID, Cwd: record.Cwd, ObservedAt: record.Timestamp}
+	if record.Type == "user" {
+		// Retire a question as soon as its answer or subsequent tool result arrives.
+		// Human text and tool-result contents are deliberately not copied.
+		o.Text = "Claude session activity continued (user input or tool result; content not copied)."
+		return o, nil
+	}
+	if record.Type != "assistant" {
 		return Observation{}, nil
 	}
 	var blocks []struct {
@@ -181,17 +192,22 @@ func claudeObservation(line []byte) (Observation, error) {
 		return Observation{}, fmt.Errorf("assistant content: %w", err)
 	}
 	var pieces []string
+	var questions []string
 	for _, b := range blocks {
 		if b.Type == "text" {
 			pieces = append(pieces, b.Text)
 		}
 		if b.Type == "tool_use" && b.Name == "AskUserQuestion" {
 			if len(b.Input) == 0 || string(b.Input) == "null" {
-				pieces = append(pieces, "Claude requested a user decision; inspect the source session for the question.")
+				questions = append(questions, "Claude requested a user decision; inspect the source session for the question.")
 			} else {
-				pieces = append(pieces, "Claude requested a user decision (untrusted source data):\n"+string(b.Input))
+				questions = append(questions, "Claude requested a user decision (untrusted source data):\n"+string(b.Input))
 			}
 		}
 	}
-	return Observation{Source: Claude, Revision: record.UUID, SessionID: record.SessionID, Text: strings.TrimSpace(strings.Join(pieces, "\n")), ObservedAt: record.Timestamp}, nil
+	o.Text = strings.TrimSpace(strings.Join(append(questions, pieces...), "\n"))
+	if o.Text == "" && len(blocks) > 0 {
+		o.Text = "Claude session activity continued (assistant tool or reasoning; content not copied)."
+	}
+	return o, nil
 }
