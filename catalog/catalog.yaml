@@ -1,6 +1,12 @@
 schema_version: 1
 
 items:
+  - id: operator
+    kind: applet
+    status: experimental
+    description: Observe new Claude Code activity, queue attention into a Codex thread, and record human-scored WhatsApp or code-feedback proposals; sending stays human-only.
+    applet: operator
+
   - id: memorylint
     kind: applet
     status: stable
