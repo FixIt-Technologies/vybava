@@ -69,6 +69,13 @@ func (c Config) Login(ctx context.Context, opts LoginOptions) (Token, error) {
 	mux.HandleFunc(redirect.Path, func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		// State is checked before anything else is honoured: a stray or forged
+		// hit on the fixed localhost port (error or code) must not settle or
+		// describe this attempt.
+		if q.Get("state") != pkce.State {
+			fmt.Fprint(w, page("Continue authorization in the original window.", "This page can be closed."))
+			return
+		}
 		if e := q.Get("error"); e != "" {
 			desc := q.Get("error_description")
 			if desc == "" {
@@ -80,7 +87,7 @@ func (c Config) Login(ctx context.Context, opts LoginOptions) (Token, error) {
 			return
 		}
 		code := q.Get("code")
-		if q.Get("state") != pkce.State || code == "" {
+		if code == "" {
 			fmt.Fprint(w, page("Continue authorization in the original window.", "This page can be closed."))
 			return
 		}

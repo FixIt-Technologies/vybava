@@ -64,8 +64,9 @@ func TestLoginExchangesCallbackCode(t *testing.T) {
 			t.Errorf("consent URL missing PKCE/client params: %s", consent)
 		}
 		go func() {
-			// Wrong state first: must be ignored, not settle the flow.
+			// Wrong state first — code and error alike — must be ignored, not settle the flow.
 			_, _ = http.Get(cfg.RedirectURI + "?code=bogus&state=nope")
+			_, _ = http.Get(cfg.RedirectURI + "?error=access_denied&error_description=forged")
 			_, _ = http.Get(cfg.RedirectURI + "?code=abc&state=" + u.Query().Get("state"))
 		}()
 		return nil
