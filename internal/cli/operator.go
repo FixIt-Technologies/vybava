@@ -28,6 +28,10 @@ func (rt *runtime) operatorApplet() *cobra.Command {
 }
 
 func (rt *runtime) operatorCommand(use string) *cobra.Command {
+	return rt.operatorCommandWithClock(use, time.Now)
+}
+
+func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *cobra.Command {
 	var dir string
 	c := &cobra.Command{Use: use, Short: "Observe Claude/WhatsApp context, queue Codex attention, and score prepared replies; never send", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() }}
 	c.PersistentFlags().StringVar(&dir, "state-dir", "~/.local/share/vybava/operator", "private trial state directory")
@@ -293,8 +297,12 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 			if err := s.View(func(state *operator.State) error {
 				next, pending = state.NextDelivery(), state.Summary().Pending
 				if !since.IsZero() {
-					next = state.NextAttention(since, time.Now())
-					if time.Now().Before(nextDispatch) {
+					var err error
+					next, err = state.ReadyAttention(since, now())
+					if err != nil {
+						return err
+					}
+					if now().Before(nextDispatch) {
 						next = ""
 					}
 				}
@@ -313,7 +321,7 @@ func (rt *runtime) operatorCommand(use string) *cobra.Command {
 					return err
 				}
 				if err == nil {
-					nextDispatch = time.Now().Add(2 * time.Minute)
+					nextDispatch = now().Add(2 * time.Minute)
 				}
 			}
 			if once || len(added) > 0 {

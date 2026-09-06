@@ -19,29 +19,33 @@ var ErrAttentionChanged = errors.New("attention is no longer current")
 // delivery. A new or partial source record defers inspection until another scan.
 func (s Store) DeliverAttention(ctx context.Context, id, thread string, since time.Time, queue Queue) error {
 	return s.deliver(ctx, id, thread, queue, func(state *State) error {
-		if state.NextAttention(since, time.Now()) != id {
-			return ErrAttentionChanged
-		}
-		e, err := state.Find(id)
+		next, err := state.ReadyAttention(since, time.Now())
 		if err != nil {
 			return err
 		}
-		cursor, ok := state.Cursors[e.Key]
-		if !ok || !filepath.IsAbs(e.Key) {
-			return ErrAttentionChanged
-		}
-		info, err := os.Lstat(e.Key)
-		if errors.Is(err, os.ErrNotExist) {
-			return ErrAttentionChanged
-		}
-		if err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() || info.Size() != cursor.Offset {
+		if next != id {
 			return ErrAttentionChanged
 		}
 		return nil
 	})
+}
+
+func (s *State) attentionSourceCurrent(e Event) error {
+	cursor, ok := s.Cursors[e.Key]
+	if !ok || !filepath.IsAbs(e.Key) {
+		return ErrAttentionChanged
+	}
+	info, err := os.Lstat(e.Key)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrAttentionChanged
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Size() != cursor.Offset {
+		return ErrAttentionChanged
+	}
+	return nil
 }
 
 // Deliver persists submitting BEFORE invoking the CLI. An ambiguous failure or

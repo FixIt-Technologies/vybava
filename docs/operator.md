@@ -33,7 +33,8 @@ It is a conservative text filter, not a semantic understanding of every blocker.
 Candidates must be unchanged for at least 20 seconds, no more than 10 minutes old,
 and newer than the activation timestamp. A reply or resumed activity supersedes
 the earlier request. The source file must still match the consumed cursor before
-delivery; unread or partial new activity defers it to the next scan.
+delivery; unread or partial new activity defers that source to the next scan.
+Removed or unfinished sources do not hold up ready requests from other sessions.
 
 At most one delivery remains unacknowledged globally; successful submissions
 also have a two-minute process-local cooldown (reset on watcher restart).
