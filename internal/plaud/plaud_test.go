@@ -91,15 +91,16 @@ func TestLoginExchangesCallbackCode(t *testing.T) {
 
 // TestSessionRefreshesAndCachesAccessToken pins the cache contract: a
 // refresh writes ONLY the access token (0600), a rotated refresh token is
-// reported through Rotated, and the cache short-circuits the next call.
+// reported through Rotated, the cache short-circuits the next call, and a
+// different injected credential never reads it.
 func TestSessionRefreshesAndCachesAccessToken(t *testing.T) {
 	refreshes := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/refresh", func(w http.ResponseWriter, r *http.Request) {
 		refreshes++
 		_ = r.ParseForm()
-		if r.PostForm.Get("refresh_token") != "old" {
-			t.Errorf("refresh_token = %q", r.PostForm.Get("refresh_token"))
+		if rt := r.PostForm.Get("refresh_token"); rt != "old" && rt != "other" {
+			t.Errorf("refresh_token = %q", rt)
 		}
 		jsonResponse(w, 200, `{"access_token":"fresh","refresh_token":"rotated","expires_in":3600}`)
 	})
@@ -118,6 +119,9 @@ func TestSessionRefreshesAndCachesAccessToken(t *testing.T) {
 	}
 	if refreshes != 1 {
 		t.Errorf("refreshes = %d, want 1 (second call served from cache)", refreshes)
+	}
+	if _, err := (Session{Config: cfg, RefreshToken: "other"}).AccessToken(context.Background()); err != nil || refreshes != 2 {
+		t.Errorf("other credential: err %v, refreshes = %d, want 2 (cache is bound to the credential)", err, refreshes)
 	}
 	if rotated.RefreshToken != "rotated" {
 		t.Errorf("Rotated not reported: %+v", rotated)
@@ -173,7 +177,7 @@ func TestListFilesQueryScansPages(t *testing.T) {
 		}
 	})
 	cfg := testConfig(t, mux)
-	if err := CacheAccessToken(cfg, Token{AccessToken: "at", ExpiresIn: 3600}); err != nil {
+	if err := (Session{Config: cfg}).CacheAccessToken(Token{AccessToken: "at", ExpiresIn: 3600}); err != nil {
 		t.Fatal(err)
 	}
 	client := Client{Session: Session{Config: cfg}}
@@ -202,7 +206,7 @@ func TestTranscriptFollowsDataLink(t *testing.T) {
 	})
 	cfg := testConfig(t, mux)
 	base = cfg.APIBase[:len(cfg.APIBase)-len("/api")]
-	if err := CacheAccessToken(cfg, Token{AccessToken: "at", ExpiresIn: 3600}); err != nil {
+	if err := (Session{Config: cfg}).CacheAccessToken(Token{AccessToken: "at", ExpiresIn: 3600}); err != nil {
 		t.Fatal(err)
 	}
 	client := Client{Session: Session{Config: cfg}}
@@ -242,7 +246,7 @@ func TestExpiredCacheRefreshes(t *testing.T) {
 		jsonResponse(w, 200, `{"email":"me@example.com"}`)
 	})
 	cfg := testConfig(t, mux)
-	if err := CacheAccessToken(cfg, Token{AccessToken: "stale", ExpiresIn: 3600}); err != nil {
+	if err := (Session{Config: cfg, RefreshToken: "rt"}).CacheAccessToken(Token{AccessToken: "stale", ExpiresIn: 3600}); err != nil {
 		t.Fatal(err)
 	}
 	user, err := Client{Session: Session{Config: cfg, RefreshToken: "rt"}}.CurrentUser(context.Background())

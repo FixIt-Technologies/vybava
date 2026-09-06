@@ -122,7 +122,7 @@ token is cached on disk.`,
 			if err != nil {
 				return err
 			}
-			if err := plaud.CacheAccessToken(session.Config, token); err != nil {
+			if err := session.CacheAccessToken(token); err != nil {
 				return err
 			}
 			return writeJSON(rt.stdout, token)

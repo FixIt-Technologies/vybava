@@ -27,7 +27,7 @@ not configurable.
 | Token | Where it lives |
 |---|---|
 | refresh token (long-lived) | onyx vault only: `onyx://Plaud/Plaud%20OAuth%20refresh%20token/token`, injected as `PLAUD_REFRESH_TOKEN` per call |
-| access token (short-lived) | `~/.plaud/access-token.json`, 0600, with expiry; refreshed transparently |
+| access token (short-lived) | `~/.plaud/access-token.json`, 0600, with expiry and a one-way hash of client ID + refresh token as its key (a different vault credential never reads it); refreshed transparently |
 
 - `plaud login --json` — consent flow; prints the raw token JSON to stdout
   and nothing else there (progress on stderr), so `mcp__onyx__run_command`

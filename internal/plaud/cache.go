@@ -2,6 +2,8 @@ package plaud
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +15,10 @@ import (
 // cached is the on-disk shape of the access-token cache. Only the short-lived
 // token lives here; the refresh token never does.
 type cached struct {
+	// Key binds the entry to the credential that minted it (a one-way hash
+	// of client ID + refresh token), so switching vault credentials never
+	// serves the previous account's token.
+	Key         string    `json:"key"`
 	AccessToken string    `json:"access_token"`
 	ExpiresAt   time.Time `json:"expires_at"`
 }
@@ -37,7 +43,7 @@ type Session struct {
 // AccessToken returns a usable bearer token, refreshing and caching as needed.
 func (s Session) AccessToken(ctx context.Context) (string, error) {
 	cfg := s.Config.withDefaults()
-	if token, ok := readCache(cfg); ok {
+	if token, ok := readCache(cfg, s.cacheKey(cfg)); ok {
 		return token, nil
 	}
 	if s.RefreshToken == "" {
@@ -47,7 +53,7 @@ func (s Session) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := CacheAccessToken(cfg, token); err != nil {
+	if err := s.CacheAccessToken(token); err != nil {
 		return "", err
 	}
 	if token.RefreshToken != "" && token.RefreshToken != s.RefreshToken && s.Rotated != nil {
@@ -56,7 +62,13 @@ func (s Session) AccessToken(ctx context.Context) (string, error) {
 	return token.AccessToken, nil
 }
 
-func readCache(cfg Config) (string, bool) {
+// cacheKey is a non-reversible fingerprint of the credential pair.
+func (s Session) cacheKey(cfg Config) string {
+	sum := sha256.Sum256([]byte(cfg.ClientID + "\x00" + s.RefreshToken))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func readCache(cfg Config, key string) (string, bool) {
 	if cfg.CacheFile == "" {
 		return "", false
 	}
@@ -65,7 +77,7 @@ func readCache(cfg Config) (string, bool) {
 		return "", false
 	}
 	var c cached
-	if json.Unmarshal(data, &c) != nil || c.AccessToken == "" {
+	if json.Unmarshal(data, &c) != nil || c.AccessToken == "" || c.Key != key {
 		return "", false
 	}
 	if !c.ExpiresAt.IsZero() && cfg.Now().After(c.ExpiresAt.Add(-expirySlack)) {
@@ -74,13 +86,14 @@ func readCache(cfg Config) (string, bool) {
 	return c.AccessToken, true
 }
 
-// CacheAccessToken stores the access token with 0600 permissions; a missing
-// CacheFile disables caching.
-func CacheAccessToken(cfg Config, token Token) error {
+// CacheAccessToken stores the access token with 0600 permissions, keyed to
+// this session's credential; a missing CacheFile disables caching.
+func (s Session) CacheAccessToken(token Token) error {
+	cfg := s.Config.withDefaults()
 	if cfg.CacheFile == "" {
 		return nil
 	}
-	c := cached{AccessToken: token.AccessToken}
+	c := cached{Key: s.cacheKey(cfg), AccessToken: token.AccessToken}
 	if token.ExpiresIn > 0 {
 		c.ExpiresAt = cfg.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	}
