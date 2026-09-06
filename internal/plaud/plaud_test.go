@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -280,6 +281,26 @@ func TestExpiredCacheRefreshes(t *testing.T) {
 	}
 	if user["email"] != "me@example.com" {
 		t.Errorf("user = %v", user)
+	}
+}
+
+// TestOversizedBodyIsAnError pins that a block bigger than the limit fails
+// loudly instead of coming back truncated as plain text.
+func TestOversizedBodyIsAnError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/open/third-party/users/current", func(w http.ResponseWriter, _ *http.Request) {
+		jsonResponse(w, 200, `{"email":"`+strings.Repeat("x", 64)+`"}`)
+	})
+	cfg := testConfig(t, mux)
+	if err := (Session{Config: cfg}).CacheAccessToken(Token{AccessToken: "at", ExpiresIn: 3600}); err != nil {
+		t.Fatal(err)
+	}
+	prev := maxBodyBytes
+	maxBodyBytes = 32
+	t.Cleanup(func() { maxBodyBytes = prev })
+	_, err := Client{Session: Session{Config: cfg}}.CurrentUser(context.Background())
+	if !errors.Is(err, ErrBodyTooLarge) {
+		t.Errorf("err = %v, want ErrBodyTooLarge", err)
 	}
 }
 

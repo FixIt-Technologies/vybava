@@ -246,15 +246,25 @@ func (e *StatusError) Detail() string {
 	return strings.TrimSpace(e.Body)
 }
 
+// maxBodyBytes caps one response; a bigger one is an error, never a
+// silently truncated "success". A var so the test can shrink it.
+var maxBodyBytes int64 = 64 << 20
+
+// ErrBodyTooLarge is returned when a response exceeds maxBodyBytes.
+var ErrBodyTooLarge = errors.New("response body exceeds the size limit")
+
 func (c Config) do(req *http.Request, op string) ([]byte, error) {
 	res, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	defer res.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(res.Body, 64<<20))
+	body, err := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("%s: read body: %w", op, err)
+	}
+	if int64(len(body)) > maxBodyBytes {
+		return nil, fmt.Errorf("%s: %w (%d MiB)", op, ErrBodyTooLarge, maxBodyBytes>>20)
 	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return nil, &StatusError{Op: op, Code: res.StatusCode, Body: string(body)}
