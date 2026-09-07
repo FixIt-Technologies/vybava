@@ -45,9 +45,56 @@ func (s *State) History(before string, limit int) (HistoryPage, error) {
 // ReviewDecision records a human's disposition of this exact proposal. It is
 // never consumed as source-app permission and has no execution side effect.
 type ReviewDecision struct {
-	Action string    `json:"action"`
-	Note   string    `json:"note,omitempty"`
-	At     time.Time `json:"at"`
+	Action         string     `json:"action"`
+	Note           string     `json:"note,omitempty"`
+	At             time.Time  `json:"at"`
+	Delivery       string     `json:"delivery,omitempty"`
+	Thread         string     `json:"thread,omitempty"`
+	Receipt        string     `json:"receipt,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
+}
+
+func (s *State) Review(id string, proposal int) (*ReviewDecision, error) {
+	e, err := s.Find(id)
+	if err != nil {
+		return nil, err
+	}
+	if proposal < 1 || proposal > len(e.Proposals) || e.Proposals[proposal-1].Decision == nil {
+		return nil, errors.New("review decision does not exist")
+	}
+	return e.Proposals[proposal-1].Decision, nil
+}
+
+func (s *State) AcknowledgeReview(id string, proposal int) error {
+	r, err := s.Review(id, proposal)
+	if err != nil {
+		return err
+	}
+	if r.AcknowledgedAt == nil {
+		now := time.Now().UTC()
+		r.AcknowledgedAt = &now
+	}
+	return nil
+}
+
+func (s *State) NextReview() (string, int) {
+	// One unacknowledged review at a time. Ambiguous delivery never auto-retries.
+	for _, e := range s.Events {
+		for _, p := range e.Proposals {
+			if p.Decision != nil && p.Decision.Delivery != "" && p.Decision.AcknowledgedAt == nil {
+				return "", 0
+			}
+		}
+	}
+	for _, e := range s.Events {
+		for i, p := range e.Proposals {
+			if p.Decision != nil && p.Decision.Delivery == "" && p.Decision.AcknowledgedAt == nil {
+				return e.ID, i + 1
+			}
+		}
+	}
+	return "", 0
 }
 
 func (s *State) Decide(id string, proposal int, action, note string) error {

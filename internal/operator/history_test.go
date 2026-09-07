@@ -1,6 +1,68 @@
 package operator
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
+
+func TestReviewDeliveryPersistsBeforeQueueAndNeverRetriesAmbiguousAcceptance(t *testing.T) {
+	s := testStore(t)
+	id := addObservation(t, s, "review-notice")
+	if err := s.With(func(state *State) error {
+		if err := state.Propose(id, "Private draft"); err != nil {
+			return err
+		}
+		return state.Decide(id, 1, "revise", "Private human note")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	queue := func(_ context.Context, thread, message string) (string, error) {
+		calls++
+		if thread != "operator" || !strings.Contains(message, "review-ack") || strings.Contains(message, "Private") {
+			t.Fatal("wrong target or leaked content")
+		}
+		if err := s.View(func(state *State) error {
+			r, err := state.Review(id, 1)
+			if err != nil {
+				return err
+			}
+			if r.Delivery != "submitting" {
+				t.Fatal("queued before durable reservation")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return "uncertain receipt", errors.New("transport disconnected")
+	}
+	if err := s.DeliverReview(context.Background(), id, 1, "operator", queue); err == nil {
+		t.Fatal("lost delivery error")
+	}
+	if err := s.DeliverReview(context.Background(), id, 1, "operator", queue); err == nil || calls != 1 {
+		t.Fatal("replayed ambiguous delivery")
+	}
+	if err := s.With(func(state *State) error { return state.AcknowledgeReview(id, 1) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.View(func(state *State) error {
+		r, err := state.Review(id, 1)
+		if err != nil {
+			return err
+		}
+		if r.AcknowledgedAt == nil || r.Receipt != "uncertain receipt" {
+			t.Fatal("actual receipt lost")
+		}
+		if next, _ := state.NextReview(); next != "" {
+			t.Fatal("acknowledged review replayed")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestHistoryIncludesUnpreparedEventsAndKeepsCursorAcrossAppends(t *testing.T) {
 	s := testStore(t)

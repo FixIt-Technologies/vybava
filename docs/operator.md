@@ -18,6 +18,12 @@ Decisions are immutable; changing the draft requires a new proposal. Superseded
 events or proposals cannot be approved. Existing numeric ratings and free-text
 feedback remain independent and may be supplied on historical proposals.
 
+With `watch --thread ...`, review choices are queued back to the operator as
+references. One unacknowledged review is in flight at a time; submitting/failed
+delivery is not automatically replayed. After inspecting the referenced decision,
+the operator records actual receipt with `review-ack EVENT --proposal N`.
+Receipt is separate from queue acceptance and from fulfilling a revision request.
+
 Snapshots advertise `history` and `review-decisions` capabilities. Storage is
 version 3: stop older watcher/writer processes before installing this build, and
 upgrade every binary that writes the same state directory. Older v2 binaries

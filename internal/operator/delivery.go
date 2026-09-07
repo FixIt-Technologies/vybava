@@ -13,6 +13,59 @@ import (
 
 type Queue func(context.Context, string, string) (string, error)
 
+// DeliverReview notifies the operator of a human review. The payload is a
+// reference, never draft text or an executable authorization.
+func (s Store) DeliverReview(ctx context.Context, id string, proposal int, thread string, queue Queue) error {
+	if strings.TrimSpace(thread) == "" {
+		return errors.New("an explicit Codex thread is required")
+	}
+	cli, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if err := s.With(func(state *State) error {
+		next, number := state.NextReview()
+		if next != id || number != proposal {
+			return errors.New("review is no longer ready for delivery")
+		}
+		r, err := state.Review(id, proposal)
+		if err != nil {
+			return err
+		}
+		r.Delivery, r.Thread = "submitting", thread
+		return nil
+	}); err != nil {
+		return err
+	}
+	ref, err := json.Marshal(struct {
+		Event    string `json:"event"`
+		Proposal int    `json:"proposal"`
+		StateDir string `json:"state_dir"`
+		CLI      string `json:"cli"`
+	}{id, proposal, s.Dir, cli})
+	if err != nil {
+		return err
+	}
+	message := "Operator companion: a human review is ready. Reference: " + string(ref) + ". Inspect with operator show, then record actual receipt with operator review-ack EVENT --proposal N. A draft approval is a review only: it does not authorize sending, merging or executing the draft. Check current source state before revising or proposing work. Preserve the human's exact feedback and never invent a score."
+	queueCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	receipt, queueErr := queue(queueCtx, thread, message)
+	saveErr := s.With(func(state *State) error {
+		r, err := state.Review(id, proposal)
+		if err != nil {
+			return err
+		}
+		r.Receipt = receipt
+		if queueErr != nil {
+			r.Delivery, r.Error = "failed", queueErr.Error()
+		} else {
+			r.Delivery = "queued"
+		}
+		return nil
+	})
+	return errors.Join(queueErr, saveErr)
+}
+
 var ErrAttentionChanged = errors.New("attention is no longer current")
 
 // DeliverAttention checks the candidate and source cursor again while reserving
