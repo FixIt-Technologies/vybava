@@ -28,6 +28,10 @@ func (s Store) Scan(claudeRoot, codexRoot string, excluded []string) ([]string, 
 }
 
 func (s Store) scan(read func(*State) ([]string, error)) ([]string, error) {
+	return s.scanWithTime(read, true)
+}
+
+func (s Store) scanWithTime(read func(*State) ([]string, error), updateScanTime bool) ([]string, error) {
 	if err := s.prepare(); err != nil {
 		return nil, err
 	}
@@ -56,8 +60,11 @@ func (s Store) scan(read func(*State) ([]string, error)) ([]string, error) {
 			}
 		}
 		current.Roots, current.Cursors = scanned.Roots, scanned.Cursors
-		now := time.Now().UTC()
-		current.LastScanAt = &now
+		current.Messages = scanned.Messages
+		if updateScanTime {
+			now := time.Now().UTC()
+			current.LastScanAt = &now
+		}
 		return nil
 	})
 	return added, err

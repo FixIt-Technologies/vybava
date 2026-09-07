@@ -54,7 +54,11 @@ human scores. `docs/operator.md` documents its CLI and the human-only send rule.
 feedback contract; source scan time is separate from snapshot read time.
 `history.go` owns stable observation pagination and immutable, revision-bound
 human review decisions. Approving a draft records review only; it never executes.
-State v3 prevents old writers from silently dropping those decisions.
+State v4 prevents old writers from silently dropping decisions and Messages coverage.
+`messages_reader.go` owns read-only SQLite metadata and pinned imsg content reads;
+`messages.go` owns baseline, changes, removal, retry and per-source coverage.
+Agent scan time is independent of Messages check time. All trial writers must be
+upgraded together before a live v4 write; see `docs/operator.md`.
 `Store.View` reads the last atomic state publication without the scanner's writer
 lock; all mutations use `Store.With`. Both share the same state validation.
 `Store.Scan` serializes source scans separately and merges observations/cursors

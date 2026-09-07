@@ -102,6 +102,11 @@ func (s *State) Decide(id string, proposal int, action, note string) error {
 	if err != nil {
 		return err
 	}
+	if action != "reject" {
+		if err := s.requireMessagesCoverage(e.Source); err != nil {
+			return err
+		}
+	}
 	if proposal < 1 || proposal > len(e.Proposals) {
 		return errors.New("proposal number does not exist (numbers start at 1)")
 	}

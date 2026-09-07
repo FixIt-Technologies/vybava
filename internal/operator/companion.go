@@ -13,12 +13,13 @@ type Feedback struct {
 }
 
 type CompanionSnapshot struct {
-	Version      int        `json:"version"`
-	CheckedAt    time.Time  `json:"checked_at"`
-	Summary      Summary    `json:"summary"`
-	LastScanAt   *time.Time `json:"last_scan_at,omitempty"`
-	Events       []Event    `json:"events"`
-	Capabilities []string   `json:"capabilities"`
+	Version      int              `json:"version"`
+	CheckedAt    time.Time        `json:"checked_at"`
+	Summary      Summary          `json:"summary"`
+	LastScanAt   *time.Time       `json:"last_scan_at,omitempty"`
+	Events       []Event          `json:"events"`
+	Capabilities []string         `json:"capabilities"`
+	Sources      []SourceCoverage `json:"sources,omitempty"`
 }
 
 // Snapshot exposes prepared work, including history, in one consistent read.
@@ -26,6 +27,10 @@ type CompanionSnapshot struct {
 func (s *State) Snapshot() CompanionSnapshot {
 	r := CompanionSnapshot{Version: 1, CheckedAt: time.Now().UTC(), Summary: s.Summary(), LastScanAt: s.LastScanAt, Events: []Event{}}
 	r.Capabilities = []string{"history", "review-decisions"}
+	if s.Messages != nil {
+		r.Capabilities = append(r.Capabilities, "source-coverage")
+		r.Sources = append(r.Sources, s.Messages.Coverage)
+	}
 	for _, e := range s.Events {
 		if len(e.Proposals) > 0 {
 			r.Events = append(r.Events, e)
