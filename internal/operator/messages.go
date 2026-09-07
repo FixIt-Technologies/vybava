@@ -55,7 +55,7 @@ func (s Store) ScanMessages(ctx context.Context, reader MessagesReader) ([]strin
 	if err := reader.validate(); err != nil {
 		return nil, err
 	}
-	return s.scanWithTime(func(state *State) ([]string, error) {
+	return s.scanWithTime(ctx, func(state *State) ([]string, error) {
 		now := time.Now().UTC()
 		if state.Messages == nil {
 			state.Messages = &MessagesState{Database: reader.Database,

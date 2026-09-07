@@ -186,7 +186,11 @@ Existing message history is not imported as fresh attention. Subsequent checks
 capture new rows and revisit the captured range for edit/retraction timestamps,
 body-length changes and local removal. Local removal is not described as proof
 of sender retraction. Identity is checked again on the decoded message. Reads are
-bounded, with at most 25 capture/removal attempts per pass and a 30s pass deadline.
+bounded, with at most 25 capture/removal attempts per pass and a 30s read deadline.
+Waiting for the shared scanner lock counts against that deadline and honors
+shutdown cancellation without starting a source read. Publishing completed or
+partial progress still uses the separate state writer lock; disk publication is
+not covered by the read deadline.
 Metadata is paged (at most 501 rows per query) within a persisted high-water sweep.
 The attempt cursor advances even for unreadable records, so a failing prefix does
 not starve later messages; failures retry on the next sweep. Restart resumes the
