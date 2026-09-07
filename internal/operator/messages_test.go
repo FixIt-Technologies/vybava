@@ -1,16 +1,109 @@
 package operator
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestMessagesSQLiteMetadataTracksChangesWithoutSourceWrites(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/sqlite3"); errors.Is(err, os.ErrNotExist) {
+		t.Skip("system SQLite CLI is unavailable")
+	}
+	database := filepath.Join(t.TempDir(), "messages.db")
+	writeFixture := func(query string) {
+		t.Helper()
+		if output, err := exec.Command("/usr/bin/sqlite3", database, query).CombinedOutput(); err != nil {
+			t.Fatalf("synthetic fixture: %v: %s", err, output)
+		}
+	}
+	writeFixture(`CREATE TABLE message(guid TEXT, text TEXT, attributedBody BLOB, date_edited INTEGER, date_retracted INTEGER);
+CREATE TABLE chat_message_join(message_id INTEGER, chat_id INTEGER);
+INSERT INTO message(ROWID,guid) VALUES(1,'baseline');`)
+	r := MessagesReader{Binary: "/verified/imsg", Database: database}
+	r.run = func(ctx context.Context, binary string, args []string, input []byte) ([]byte, error) {
+		if args[0] == "--version" {
+			return []byte("0.15.2"), nil
+		}
+		if binary != "/usr/bin/sqlite3" || args[0] != "-readonly" {
+			t.Fatal("unexpected source command")
+		}
+		return (MessagesReader{}).command(ctx, binary, args, input)
+	}
+	unchanged := func(read func()) {
+		t.Helper()
+		before, err := os.ReadFile(database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		read()
+		after, err := os.ReadFile(database)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(before, after) {
+			t.Fatal("reader modified source database")
+		}
+	}
+	unchanged(func() {
+		anchor, err := r.Baseline(context.Background())
+		if err != nil || anchor.ID != 1 || anchor.GUID != "baseline" {
+			t.Fatalf("baseline: %+v %v", anchor, err)
+		}
+	})
+	writeFixture(`WITH RECURSIVE ids(n) AS (VALUES(2) UNION ALL SELECT n+1 FROM ids WHERE n<503)
+INSERT INTO message(ROWID,guid,text,attributedBody) SELECT n,printf('guid-%d',n),'é',X'010203' FROM ids;
+INSERT INTO chat_message_join SELECT ROWID,7 FROM message WHERE ROWID>1;
+INSERT INTO chat_message_join VALUES(2,9);`)
+	page := func(after int64) []MessageRow {
+		t.Helper()
+		rows, err := r.Page(context.Background(), 1, "baseline", after, 503)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	unchanged(func() {
+		first := page(1)
+		if len(first) != 500 {
+			t.Fatalf("wrong first page count: %d", len(first))
+		}
+		if first[0] != (MessageRow{ID: 2, GUID: "guid-2", ChatID: 7, TextBytes: 2, BodyBytes: 3}) || first[499].ID != 501 {
+			t.Fatalf("wrong first page bounds/fingerprint: %+v / %+v", first[0], first[499])
+		}
+		last := page(501)
+		if len(last) != 2 || last[0].ID != 502 || last[1].ID != 503 {
+			t.Fatalf("wrong final page: %+v", last)
+		}
+	})
+	writeFixture(`UPDATE message SET text='hello',attributedBody=X'0102030405',date_edited=10,date_retracted=20 WHERE ROWID=2;
+DELETE FROM message WHERE ROWID=503;
+DELETE FROM chat_message_join WHERE message_id=503;`)
+	unchanged(func() {
+		first := page(1)
+		if len(first) != 500 {
+			t.Fatalf("wrong changed page count: %d", len(first))
+		}
+		changed := first[0]
+		if changed != (MessageRow{ID: 2, GUID: "guid-2", ChatID: 7, TextBytes: 5, BodyBytes: 5, Edited: 10, Retracted: 20}) {
+			t.Fatalf("mutation fingerprint: %+v", changed)
+		}
+		last := page(501)
+		if len(last) != 1 || last[0].ID != 502 {
+			t.Fatalf("removed row still present: %+v", last)
+		}
+	})
+}
 
 func mockMessagesMetadata(query string, anchor MessageRow, rows []MessageRow) ([]byte, error) {
 	if strings.Contains(query, "MAX(ROWID)") {
