@@ -40,11 +40,12 @@ type Rating struct {
 }
 
 type Proposal struct {
-	Text       string     `json:"text"`
-	CreatedAt  time.Time  `json:"created_at"`
-	Superseded bool       `json:"superseded"`
-	Rating     *Rating    `json:"rating,omitempty"`
-	Feedback   []Feedback `json:"feedback,omitempty"`
+	Text       string          `json:"text"`
+	CreatedAt  time.Time       `json:"created_at"`
+	Superseded bool            `json:"superseded"`
+	Rating     *Rating         `json:"rating,omitempty"`
+	Feedback   []Feedback      `json:"feedback,omitempty"`
+	Decision   *ReviewDecision `json:"decision,omitempty"`
 }
 
 type Event struct {
@@ -104,7 +105,7 @@ func (s Store) prepare() error {
 }
 
 func (s Store) load() (State, []byte, error) {
-	state := State{Version: 2, Roots: map[string]bool{}, Cursors: map[string]Cursor{}}
+	state := State{Version: 3, Roots: map[string]bool{}, Cursors: map[string]Cursor{}}
 	path := filepath.Join(s.Dir, "state.json")
 	var original []byte
 	if info, err := os.Lstat(path); err == nil {
@@ -119,11 +120,11 @@ func (s Store) load() (State, []byte, error) {
 		if err := json.Unmarshal(data, &state); err != nil {
 			return State{}, nil, fmt.Errorf("read operator state: %w", err)
 		}
-		if (state.Version != 1 && state.Version != 2) || state.Roots == nil || state.Cursors == nil {
+		if (state.Version < 1 || state.Version > 3) || state.Roots == nil || state.Cursors == nil {
 			return State{}, nil, errors.New("unsupported or incomplete operator state")
 		}
-		// Older binaries reject v2 instead of silently dropping human feedback.
-		state.Version = 2
+		// Older binaries reject v3 instead of silently dropping review decisions.
+		state.Version = 3
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return State{}, nil, err
 	}

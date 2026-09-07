@@ -126,14 +126,14 @@ func TestCompanionUpgradeProtectsNewFieldsFromOldWriters(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.With(func(state *State) error {
-		if state.Version != 2 {
+		if state.Version != 3 {
 			t.Fatal("old writer could discard companion data")
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"version":3,"roots":{},"cursors":{},"events":[]}`), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"version":4,"roots":{},"cursors":{},"events":[]}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.With(func(*State) error { t.Fatal("accepted unknown version"); return nil }); err == nil {

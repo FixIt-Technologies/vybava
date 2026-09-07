@@ -224,6 +224,61 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		}{args[0]})
 	}}
 	feedback.Flags().IntVar(&feedbackProposal, "proposal", 0, "explicit proposal number from show (starts at 1)")
+	var historyBefore string
+	var historyLimit int
+	history := &cobra.Command{Use: "history", Short: "Read all recorded observations in stable pages, including superseded events", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		var result operator.HistoryPage
+		if err := s.View(func(state *operator.State) error {
+			var err error
+			result, err = state.History(historyBefore, historyLimit)
+			return err
+		}); err != nil {
+			return err
+		}
+		return output(result)
+	}}
+	history.Flags().StringVar(&historyBefore, "before", "", "event ID cursor from the previous page")
+	history.Flags().IntVar(&historyLimit, "limit", 50, "page size, 1–200")
+	var decisionProposal int
+	var decisionAction string
+	decision := &cobra.Command{Use: "decide EVENT", Short: "Record a human review decision; never sends or executes the proposal", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		note, err := readInput()
+		if err != nil {
+			return err
+		}
+		if err := s.With(func(state *operator.State) error {
+			return state.Decide(args[0], decisionProposal, decisionAction, note)
+		}); err != nil {
+			return err
+		}
+		return output(struct {
+			Event string `json:"decision_recorded"`
+		}{args[0]})
+	}}
+	decision.Flags().IntVar(&decisionProposal, "proposal", 0, "exact proposal number")
+	decision.Flags().StringVar(&decisionAction, "action", "", "approve, reject or revise; records a review only")
+	var acknowledgedProposal int
+	reviewAck := &cobra.Command{Use: "review-ack EVENT", Short: "Record actual operator receipt of a specific human review", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		if err := s.With(func(state *operator.State) error { return state.AcknowledgeReview(args[0], acknowledgedProposal) }); err != nil {
+			return err
+		}
+		return output(struct {
+			Event string `json:"review_acknowledged"`
+		}{args[0]})
+	}}
+	reviewAck.Flags().IntVar(&acknowledgedProposal, "proposal", 0, "exact reviewed proposal number")
 	queue := func(ctx context.Context, thread, message string) (string, error) {
 		b, err := exec.CommandContext(ctx, "codex", "queue", "--thread", thread, "--message", message).CombinedOutput()
 		if err != nil {
@@ -288,6 +343,18 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		defer ticker.Stop()
 		var nextDispatch time.Time
 		for {
+			if watchThread != "" {
+				var reviewID string
+				var reviewNumber int
+				if err := s.View(func(state *operator.State) error { reviewID, reviewNumber = state.NextReview(); return nil }); err != nil {
+					return err
+				}
+				if reviewID != "" {
+					if err := s.DeliverReview(ctx, reviewID, reviewNumber, watchThread, queue); err != nil {
+						return err
+					}
+				}
+			}
 			var next string
 			var pending int
 			added, err := s.Scan(root, codexRoot, excludedCodex)
@@ -353,6 +420,6 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 	watch.Flags().StringVar(&attentionSince, "attention-since", "", "only recent, settled Claude questions/blockers/handoffs after this RFC3339 timestamp; requires --thread")
 	watch.Flags().DurationVar(&interval, "interval", 5*time.Second, "scan interval")
 	watch.Flags().BoolVar(&once, "once", false, "perform one scan then exit")
-	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback)
+	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback, history, decision, reviewAck)
 	return c
 }

@@ -4,6 +4,32 @@ Codex is the main operator. This applet provides local observation, delivery and
 evaluation state; it does not implement an AI model, a WhatsApp connector, UI
 automation, or sending. Eve can be a destination for separately delegated work.
 
+## Companion history and review
+
+`operator history --limit 50` returns every recorded observation, newest ingested
+first, including unprepared and superseded events. Pass its `next` event ID to
+`--before` for the next page. Appends do not shift that cursor. This is the trial's
+recorded history, not a retroactive import of every source application's archive.
+
+`operator decide EVENT --proposal N --action approve|reject|revise` records a
+human review of the exact proposal; stdin contains an optional note (required for
+revise). It never sends, merges, dispatches, or assigns a correctness score.
+Decisions are immutable; changing the draft requires a new proposal. Superseded
+events or proposals cannot be approved. Existing numeric ratings and free-text
+feedback remain independent and may be supplied on historical proposals.
+
+With `watch --thread ...`, review choices are queued back to the operator as
+references. One unacknowledged review is in flight at a time; submitting/failed
+delivery is not automatically replayed. After inspecting the referenced decision,
+the operator records actual receipt with `review-ack EVENT --proposal N`.
+Receipt is separate from queue acceptance and from fulfilling a revision request.
+
+Snapshots advertise `history` and `review-decisions` capabilities. Storage is
+version 3: stop older watcher/writer processes before installing this build, and
+upgrade every binary that writes the same state directory. Older v2 binaries
+reject v3 rather than dropping decisions. Back up the private state before the
+upgrade; never roll it back over new observations or feedback.
+
 ## Start with actual Claude activity
 
 `vybava operator watch --once` establishes a baseline at the current end of

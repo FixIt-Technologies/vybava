@@ -52,6 +52,9 @@ observations, durable delivery receipts, revision-bound proposals and actual
 human scores. `docs/operator.md` documents its CLI and the human-only send rule.
 `internal/operator/companion.go` owns the native companion snapshot and free-text
 feedback contract; source scan time is separate from snapshot read time.
+`history.go` owns stable observation pagination and immutable, revision-bound
+human review decisions. Approving a draft records review only; it never executes.
+State v3 prevents old writers from silently dropping those decisions.
 `Store.View` reads the last atomic state publication without the scanner's writer
 lock; all mutations use `Store.With`. Both share the same state validation.
 `Store.Scan` serializes source scans separately and merges observations/cursors
