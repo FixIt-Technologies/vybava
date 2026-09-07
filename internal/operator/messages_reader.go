@@ -92,9 +92,9 @@ func (r MessagesReader) Baseline(ctx context.Context) (MessageRow, error) {
 	return rows[0], nil
 }
 
-// Rows revisits the captured range, because edits/retractions do not append IDs.
+// Page includes the original anchor in every bounded query, at most 501 rows total.
 // Read receipts are deliberately absent from the fingerprint.
-func (r MessagesReader) Rows(ctx context.Context, baseline int64, anchorGUID string) ([]MessageRow, error) {
+func (r MessagesReader) Page(ctx context.Context, baseline int64, anchorGUID string, after, high int64) ([]MessageRow, error) {
 	if err := r.validate(); err != nil {
 		return nil, err
 	}
@@ -105,7 +105,7 @@ func (r MessagesReader) Rows(ctx context.Context, baseline int64, anchorGUID str
  COALESCE((SELECT chat_id FROM chat_message_join WHERE message_id=m.ROWID ORDER BY chat_id LIMIT 1),0) AS chat_id,
  COALESCE(m.date_edited,0) AS edited, COALESCE(m.date_retracted,0) AS retracted,
  COALESCE(length(CAST(m.text AS BLOB)),0) AS text_bytes, COALESCE(length(m.attributedBody),0) AS body_bytes
- FROM message m WHERE m.ROWID >= ` + strconv.FormatInt(baseline, 10) + ` ORDER BY m.ROWID;`
+ FROM message m WHERE m.ROWID = ` + strconv.FormatInt(baseline, 10) + ` OR (m.ROWID > ` + strconv.FormatInt(after, 10) + ` AND m.ROWID <= ` + strconv.FormatInt(high, 10) + `) ORDER BY m.ROWID LIMIT 501;`
 	data, err := r.command(ctx, "/usr/bin/sqlite3", []string{"-readonly", "-json", r.Database, query}, nil)
 	if err != nil {
 		return nil, err
@@ -122,9 +122,9 @@ func (r MessagesReader) Rows(ctx context.Context, baseline int64, anchorGUID str
 		}
 		rows = rows[1:]
 	}
-	previous := baseline
+	previous := after
 	for _, row := range rows {
-		if row.ID <= previous || row.GUID == "" || row.ChatID <= 0 {
+		if row.ID <= previous || row.ID > high || row.GUID == "" || row.ChatID <= 0 {
 			return nil, errors.New("Messages metadata is incomplete; retry after source synchronization")
 		}
 		previous = row.ID

@@ -5,10 +5,40 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func mockMessagesMetadata(query string, anchor MessageRow, rows []MessageRow) ([]byte, error) {
+	if strings.Contains(query, "MAX(ROWID)") {
+		last := anchor
+		for _, row := range rows {
+			if row.ID > last.ID {
+				last = row
+			}
+		}
+		return json.Marshal([]MessageRow{last})
+	}
+	match := regexp.MustCompile(`m.ROWID > (\d+) AND m.ROWID <= (\d+)`).FindStringSubmatch(query)
+	if len(match) != 3 {
+		return nil, errors.New("unexpected query")
+	}
+	after, _ := strconv.ParseInt(match[1], 10, 64)
+	high, _ := strconv.ParseInt(match[2], 10, 64)
+	result := []MessageRow{}
+	if anchor.ID > 0 {
+		result = append(result, anchor)
+	}
+	for _, row := range rows {
+		if row.ID > after && row.ID <= high && len(result) < 501 {
+			result = append(result, row)
+		}
+	}
+	return json.Marshal(result)
+}
 
 func TestMessagesBaselineChangesRemovalAndRestart(t *testing.T) {
 	s := testStore(t)
@@ -25,10 +55,7 @@ func TestMessagesBaselineChangesRemovalAndRestart(t *testing.T) {
 			if args[0] != "-readonly" {
 				t.Fatal("source database not read-only")
 			}
-			if strings.Contains(args[3], "MAX(ROWID)") {
-				return []byte(`[{"id":10,"guid":"baseline-guid"}]`), nil
-			}
-			return json.Marshal(append([]MessageRow{{ID: 10, GUID: "baseline-guid"}}, rows...))
+			return mockMessagesMetadata(args[3], MessageRow{ID: 10, GUID: "baseline-guid"}, rows)
 		}
 		reads++
 		if failed {
@@ -120,19 +147,13 @@ func TestMessagesBaselineChangesRemovalAndRestart(t *testing.T) {
 func TestMessagesCatchupIsBoundedAndDoesNotDeleteDeferredRecords(t *testing.T) {
 	s := testStore(t)
 	r := MessagesReader{Binary: "/verified/imsg", Database: "/messages/chat.db"}
-	rows := make([]MessageRow, 27)
-	for i := range rows {
-		rows[i] = MessageRow{ID: int64(i + 1), GUID: fmt.Sprint(i + 1), ChatID: 7}
-	}
+	rows := []MessageRow{}
 	r.run = func(_ context.Context, binary string, args []string, input []byte) ([]byte, error) {
 		if args[0] == "--version" {
 			return []byte("0.15.2\n"), nil
 		}
 		if binary == "/usr/bin/sqlite3" {
-			if strings.Contains(args[3], "MAX(ROWID)") {
-				return []byte(`[{"id":0}]`), nil
-			}
-			return json.Marshal(rows)
+			return mockMessagesMetadata(args[3], MessageRow{}, rows)
 		}
 		var req struct {
 			Params struct {
@@ -148,6 +169,11 @@ func TestMessagesCatchupIsBoundedAndDoesNotDeleteDeferredRecords(t *testing.T) {
 		ids, err := s.ScanMessages(context.Background(), r)
 		if err != nil || len(ids) != want {
 			t.Fatalf("capture got %d %v, wanted %d", len(ids), err, want)
+		}
+		if len(rows) == 0 {
+			for i := 1; i <= 27; i++ {
+				rows = append(rows, MessageRow{ID: int64(i), GUID: fmt.Sprint(i), ChatID: 7})
+			}
 		}
 	}
 	if err := s.View(func(state *State) error {
@@ -179,7 +205,7 @@ func TestMessagesReaderRejectsChangedOrMissingBaselineAnchor(t *testing.T) {
 	r := MessagesReader{Binary: "/verified/imsg", Database: "/messages/chat.db"}
 	for _, response := range []string{"", `[{"id":10,"guid":"replacement"}]`, `[{"id":11,"guid":"later","chat_id":7}]`} {
 		r.run = func(context.Context, string, []string, []byte) ([]byte, error) { return []byte(response), nil }
-		if _, err := r.Rows(context.Background(), 10, "baseline-guid"); err == nil {
+		if _, err := r.Page(context.Background(), 10, "baseline-guid", 10, 11); err == nil {
 			t.Fatal("changed source anchor accepted as current")
 		}
 	}
@@ -236,6 +262,118 @@ func TestMessagesInitialFailureKeepsCoverageAndRetriesBaseline(t *testing.T) {
 	if err := s.View(func(state *State) error {
 		if !state.Messages.Initialized || state.Messages.Baseline != 0 || state.Messages.Coverage.Error != "" {
 			t.Fatal("empty-database baseline did not recover")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMessagesPagedSweepFairRetriesAndBoundedRemoval(t *testing.T) {
+	s := testStore(t)
+	rows := []MessageRow{}
+	version := "0.15.2"
+	failFront := true
+	metadataFailure := false
+	r := MessagesReader{Binary: "/verified/imsg", Database: "/messages/chat.db"}
+	r.run = func(_ context.Context, binary string, args []string, input []byte) ([]byte, error) {
+		if args[0] == "--version" {
+			return []byte(version), nil
+		}
+		if binary == "/usr/bin/sqlite3" {
+			if metadataFailure && strings.Contains(args[3], "m.ROWID > 501 ") {
+				return nil, errors.New("metadata unavailable")
+			}
+			return mockMessagesMetadata(args[3], MessageRow{}, rows)
+		}
+		var request struct {
+			Params struct {
+				Since int64 `json:"since_rowid"`
+			}
+		}
+		if err := json.Unmarshal(input, &request); err != nil {
+			t.Fatal(err)
+		}
+		id := request.Params.Since + 1
+		if failFront && id <= 25 {
+			return nil, errors.New("unreadable message")
+		}
+		return []byte(fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"result":{"messages":[{"id":%d,"guid":"%d","chat_id":7}]}}`, id, id)), nil
+	}
+	scan := func() int {
+		t.Helper()
+		ids, err := s.ScanMessages(context.Background(), r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(ids)
+	}
+	scan()
+	for i := 1; i <= 530; i++ {
+		rows = append(rows, MessageRow{ID: int64(i), GUID: fmt.Sprint(i), ChatID: 7})
+	}
+	if scan() != 0 {
+		t.Fatal("failed front unexpectedly captured")
+	}
+	s = Store{Dir: s.Dir}
+	if scan() != 25 {
+		t.Fatal("failed front starved later rows after restart")
+	}
+	version = "wrong"
+	scan()
+	if err := s.View(func(state *State) error {
+		if state.Messages.Coverage.Error == "" || state.Messages.Sweep.After != 50 {
+			t.Fatal("restart accepted unverified reader")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	version = "0.15.2"
+	for i := 0; i < 22; i++ {
+		scan()
+	}
+	failFront = false
+	for i := 0; i < 3; i++ {
+		scan()
+	}
+	if err := s.View(func(state *State) error {
+		if len(state.Messages.Records) != 530 || state.Messages.Coverage.Error != "" {
+			t.Fatal("fair retry did not recover")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// An error after one full metadata page must retain every record and freshness.
+	metadataFailure = true
+	scan()
+	if err := s.View(func(state *State) error {
+		if len(state.Messages.Records) != 530 || state.Messages.Sweep == nil || state.Messages.Sweep.After != 501 || state.Messages.Coverage.Error == "" {
+			t.Fatal("incomplete metadata sweep certified removal or coverage")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	metadataFailure = false
+	scan()
+	rows = nil
+	if scan() != 25 {
+		t.Fatal("removals were not bounded")
+	}
+	s = Store{Dir: s.Dir}
+	// A record restored between removal passes must not be declared removed.
+	rows = []MessageRow{{ID: 26, GUID: "26", ChatID: 7}}
+	if scan() != 24 {
+		t.Fatal("restored row was removed or removal resumption failed")
+	}
+	if err := s.View(func(state *State) error {
+		if _, ok := state.Messages.Records[26]; !ok {
+			t.Fatal("restored row deleted")
+		}
+		if state.Messages.Coverage.Error == "" || state.Messages.Sweep == nil {
+			t.Fatal("deferred removals certified complete")
 		}
 		return nil
 	}); err != nil {

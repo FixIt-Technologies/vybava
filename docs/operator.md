@@ -178,15 +178,24 @@ do not raise the average. There is no auto-send threshold or promotion command.
 baseline on the first successful read. Omit `--once` for periodic checks (30s by
 default, minimum 5s). `--db` defaults to `~/Library/Messages/chat.db`. Verify the
 pinned `openclaw/imsg` v0.15.2 archive digest and signature before selecting the
-reader. No bridge/injection helper is required or used. The reader runs with
+reader. Its version is checked on every scan, including initialized restarts;
+a changed or unavailable reader records a coverage error. No bridge/injection helper is required or used. The reader runs with
 non-TTY stdin and only `messages.after` RPC; SQLite always uses `-readonly`.
 
 Existing message history is not imported as fresh attention. Subsequent checks
 capture new rows and revisit the captured range for edit/retraction timestamps,
 body-length changes and local removal. Local removal is not described as proof
 of sender retraction. Identity is checked again on the decoded message. Reads are
-bounded, with at most 25 changed records per pass and a 30s pass deadline;
-uncaptured records remain eligible for the next pass. Context changes supersede
+bounded, with at most 25 capture/removal attempts per pass and a 30s pass deadline.
+Metadata is paged (at most 501 rows per query) within a persisted high-water sweep.
+The attempt cursor advances even for unreadable records, so a failing prefix does
+not starve later messages; failures retry on the next sweep. Restart resumes the
+stored sweep and seen IDs. Removal checks begin only after metadata enumeration
+finishes, share the capture budget, and re-read each missing identity before
+recording removal. Deferred or failed removals retain their stored records;
+restored rows are revisited in the next sweep. A partial sweep, any failed attempt,
+or newer rows outside its high water prevents complete-coverage certification.
+Context changes supersede
 older proposals in that conversation. Messages observations are recorded, not
 automatically dispatched by the conservative Claude attention selector.
 
@@ -197,7 +206,7 @@ coverage within two minutes; this does not replace re-reading the actual thread
 before proposing. Rejecting an existing proposal remains available. No command
 sends, marks messages read, opens the app or touches its composer.
 
-State v4 persists baseline, per-message fingerprints and coverage atomically with
+State v4 persists baseline, per-message fingerprints, sweep progress and coverage atomically with
 observations. Stop and upgrade every writer before using it on a live state-v3
 trial; retain a private backup. The native snapshot wire version remains 1.
 The baseline row's immutable GUID is checked on every pass. If that anchor is

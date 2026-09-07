@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -23,6 +24,16 @@ type MessagesState struct {
 	Initialized bool                 `json:"initialized"`
 	Records     map[int64]MessageRow `json:"records"`
 	Coverage    SourceCoverage       `json:"coverage"`
+	Sweep       *MessagesSweep       `json:"sweep,omitempty"`
+}
+
+type MessagesSweep struct {
+	High         int64          `json:"high"`
+	After        int64          `json:"after"`
+	Seen         map[int64]bool `json:"seen"`
+	MetadataDone bool           `json:"metadata_done"`
+	RemovalAfter int64          `json:"removal_after"`
+	Failures     int            `json:"failures"`
 }
 
 func (s *State) requireMessagesCoverage(source Source) error {
@@ -56,27 +67,26 @@ func (s Store) ScanMessages(ctx context.Context, reader MessagesReader) ([]strin
 			return nil, errors.New("Messages database differs from the recorded baseline; use a separate state directory")
 		}
 		m.Coverage.LastCheckedAt = now
-		if !m.Initialized {
-			baseline, err := reader.Baseline(ctx)
-			if err != nil {
-				m.Coverage.Error = err.Error()
-				return []string{}, nil
-			}
-			m.Baseline, m.AnchorGUID, m.Initialized = baseline.ID, baseline.GUID, true
-			m.Coverage.Error, m.Coverage.LastSuccessAt = "", &now
-			return []string{}, nil
-		}
-		rows, err := reader.Rows(ctx, m.Baseline, m.AnchorGUID)
+		// Revalidate the pinned reader even after a persisted baseline/restart.
+		baseline, err := reader.Baseline(ctx)
 		if err != nil {
 			m.Coverage.Error = err.Error()
 			return []string{}, nil
 		}
-		present := map[int64]bool{}
-		for _, row := range rows {
-			present[row.ID] = true
+		if !m.Initialized {
+			m.Baseline, m.AnchorGUID, m.Initialized = baseline.ID, baseline.GUID, true
+			m.Coverage.Error, m.Coverage.LastSuccessAt = "", &now
+			return []string{}, nil
 		}
+		if m.Sweep == nil {
+			m.Sweep = &MessagesSweep{High: baseline.ID, After: m.Baseline, Seen: map[int64]bool{}}
+		}
+		if _, err := reader.Page(ctx, m.Baseline, m.AnchorGUID, m.Baseline, m.Baseline); err != nil {
+			m.Coverage.Error = err.Error()
+			return []string{}, nil
+		}
+		sweep := m.Sweep
 		added := []string{}
-		failures := 0
 		reads := 0
 		capture := func(row MessageRow, kind string, payload json.RawMessage) bool {
 			text, err := json.Marshal(struct {
@@ -85,14 +95,14 @@ func (s Store) ScanMessages(ctx context.Context, reader MessagesReader) ([]strin
 				Message json.RawMessage `json:"message,omitempty"`
 			}{kind, row, payload})
 			if err != nil {
-				failures++
+				sweep.Failures++
 				return false
 			}
 			id, fresh, err := state.Observe(Observation{Source: Messages,
 				Key:      fmt.Sprintf("%s:chat:%d", digest(reader.Database)[:16], row.ChatID),
 				Revision: digest(string(text) + now.Format(time.RFC3339Nano)), Text: string(text), ObservedAt: now})
 			if err != nil {
-				failures++
+				sweep.Failures++
 				return false
 			}
 			if fresh {
@@ -100,45 +110,92 @@ func (s Store) ScanMessages(ctx context.Context, reader MessagesReader) ([]strin
 			}
 			return true
 		}
-		for _, row := range rows {
-			previous, known := m.Records[row.ID]
-			if known && previous == row {
-				continue
+		for !sweep.MetadataDone && reads < 25 && ctx.Err() == nil {
+			rows, err := reader.Page(ctx, m.Baseline, m.AnchorGUID, sweep.After, sweep.High)
+			if err != nil {
+				m.Coverage.Error = err.Error()
+				return added, nil
 			}
-			if reads >= 25 || ctx.Err() != nil {
-				failures++
-				continue
+			if len(rows) == 0 {
+				sweep.MetadataDone = true
+				break
 			}
-			reads++
-			kind := "message"
-			if known {
-				kind = "message-changed"
-			}
-			var payload json.RawMessage
-			if row.Retracted > 0 {
-				kind = "message-retracted"
-			} else {
-				payload, err = reader.Message(ctx, row)
-				if err != nil {
-					failures++
+			for _, row := range rows {
+				if reads >= 25 || ctx.Err() != nil {
+					break
+				}
+				// Advance attempts even on failure; subsequent sweeps retry fairly.
+				sweep.After = row.ID
+				sweep.Seen[row.ID] = true
+				previous, known := m.Records[row.ID]
+				if known && previous == row {
 					continue
 				}
-			}
-			if capture(row, kind, payload) {
-				m.Records[row.ID] = row
+				reads++
+				kind := "message"
+				if known {
+					kind = "message-changed"
+				}
+				var payload json.RawMessage
+				if row.Retracted > 0 {
+					kind = "message-retracted"
+				} else {
+					payload, err = reader.Message(ctx, row)
+					if err != nil {
+						sweep.Failures++
+						continue
+					}
+				}
+				if capture(row, kind, payload) {
+					m.Records[row.ID] = row
+				}
 			}
 		}
-		for id, previous := range m.Records {
-			if !present[id] && capture(previous, "message-removed-from-local-history", nil) {
-				delete(m.Records, id)
+		removalsDone := false
+		if sweep.MetadataDone && ctx.Err() == nil {
+			ids := make([]int64, 0, len(m.Records))
+			for id := range m.Records {
+				if id > sweep.RemovalAfter && !sweep.Seen[id] {
+					ids = append(ids, id)
+				}
+			}
+			sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+			removalsDone = true
+			for _, id := range ids {
+				if reads >= 25 || ctx.Err() != nil {
+					removalsDone = false
+					break
+				}
+				reads++
+				// A row may have been restored since its metadata page was read.
+				rows, err := reader.Page(ctx, m.Baseline, m.AnchorGUID, id-1, id)
+				sweep.RemovalAfter = id
+				if err != nil {
+					sweep.Failures++
+					continue
+				}
+				if len(rows) > 0 {
+					sweep.Failures++
+					continue
+				}
+				if capture(m.Records[id], "message-removed-from-local-history", nil) {
+					delete(m.Records, id)
+				}
 			}
 		}
-		if failures > 0 {
-			m.Coverage.Error = fmt.Sprintf("%d Messages records could not be captured; they remain eligible for retry", failures)
+		if !sweep.MetadataDone || !removalsDone {
+			m.Coverage.Error = "Messages sweep is incomplete; remaining records will be checked on the next pass"
+		} else if sweep.Failures > 0 {
+			m.Coverage.Error = fmt.Sprintf("%d Messages records could not be captured; they remain eligible for retry", sweep.Failures)
+			m.Sweep = nil
+		} else if baseline.ID > sweep.High {
+			m.Coverage.Error = "Messages sweep completed, but newer records remain for the next pass"
+			m.Sweep = nil
 		} else {
 			m.Coverage.Error = ""
 			completed := time.Now().UTC()
 			m.Coverage.LastSuccessAt = &completed
+			m.Sweep = nil
 		}
 		return added, nil
 	}, false)
