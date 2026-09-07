@@ -195,6 +195,10 @@ finishes, share the capture budget, and re-read each missing identity before
 recording removal. Deferred or failed removals retain their stored records;
 restored rows are revisited in the next sweep. A partial sweep, any failed attempt,
 or newer rows outside its high water prevents complete-coverage certification.
+Successful coverage is dated from the sweep's oldest check, not its completion.
+A sweep lasting over two minutes (including time asleep or stopped), or an older
+persisted sweep without a start time, must finish and then run a fresh sweep before
+it can certify current coverage. Previously seen rows can change during a pause.
 Context changes supersede
 older proposals in that conversation. Messages observations are recorded, not
 automatically dispatched by the conservative Claude attention selector.

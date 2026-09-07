@@ -380,3 +380,62 @@ func TestMessagesPagedSweepFairRetriesAndBoundedRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMessagesRestartCannotRefreshStaleSeenRows(t *testing.T) {
+	s := testStore(t)
+	rows := []MessageRow{}
+	r := MessagesReader{Binary: "/verified/imsg", Database: "/messages/chat.db"}
+	r.run = func(_ context.Context, _ string, args []string, _ []byte) ([]byte, error) {
+		if args[0] == "--version" {
+			return []byte("0.15.2"), nil
+		}
+		return mockMessagesMetadata(args[3], MessageRow{}, rows)
+	}
+	scan := func(want int) {
+		t.Helper()
+		ids, err := s.ScanMessages(context.Background(), r)
+		if err != nil || len(ids) != want {
+			t.Fatalf("capture got %d %v, wanted %d", len(ids), err, want)
+		}
+	}
+	scan(0)
+	for i := 1; i <= 26; i++ {
+		rows = append(rows, MessageRow{ID: int64(i), GUID: fmt.Sprint(i), ChatID: 7, Retracted: 1})
+	}
+	scan(25)
+	var priorSuccess time.Time
+	if err := s.With(func(state *State) error {
+		priorSuccess = *state.Messages.Coverage.LastSuccessAt
+		state.Messages.Sweep.StartedAt = time.Now().Add(-10 * time.Minute)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows = rows[1:] // A previously seen row disappears, without changing MAX(ROWID).
+	s = Store{Dir: s.Dir}
+	scan(1)
+	if err := s.View(func(state *State) error {
+		m := state.Messages
+		if m.Coverage.Error == "" || !m.Coverage.LastSuccessAt.Equal(priorSuccess) || m.Sweep != nil {
+			t.Fatal("finishing an old sweep certified stale seen rows as fresh")
+		}
+		if state.Propose(state.Events[len(state.Events)-1].ID, "draft") == nil {
+			t.Fatal("stale sweep allowed proposal")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scan(1) // A fresh sweep rechecks the old prefix and observes the removal.
+	if err := s.View(func(state *State) error {
+		if _, ok := state.Messages.Records[1]; ok {
+			t.Fatal("new sweep missed removal")
+		}
+		if state.Messages.Coverage.Error != "" {
+			t.Fatal("new sweep failed to recover")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -28,6 +28,7 @@ type MessagesState struct {
 }
 
 type MessagesSweep struct {
+	StartedAt    time.Time      `json:"started_at"`
 	High         int64          `json:"high"`
 	After        int64          `json:"after"`
 	Seen         map[int64]bool `json:"seen"`
@@ -79,7 +80,7 @@ func (s Store) ScanMessages(ctx context.Context, reader MessagesReader) ([]strin
 			return []string{}, nil
 		}
 		if m.Sweep == nil {
-			m.Sweep = &MessagesSweep{High: baseline.ID, After: m.Baseline, Seen: map[int64]bool{}}
+			m.Sweep = &MessagesSweep{StartedAt: now, High: baseline.ID, After: m.Baseline, Seen: map[int64]bool{}}
 		}
 		if _, err := reader.Page(ctx, m.Baseline, m.AnchorGUID, m.Baseline, m.Baseline); err != nil {
 			m.Coverage.Error = err.Error()
@@ -191,10 +192,14 @@ func (s Store) ScanMessages(ctx context.Context, reader MessagesReader) ([]strin
 		} else if baseline.ID > sweep.High {
 			m.Coverage.Error = "Messages sweep completed, but newer records remain for the next pass"
 			m.Sweep = nil
+		} else if sweep.StartedAt.IsZero() || time.Since(sweep.StartedAt) > 2*time.Minute {
+			m.Coverage.Error = "Messages sweep completed with stale checks; a new sweep must reverify the source"
+			m.Sweep = nil
 		} else {
 			m.Coverage.Error = ""
-			completed := time.Now().UTC()
-			m.Coverage.LastSuccessAt = &completed
+			// Freshness belongs to the oldest check, never the final publication.
+			checked := sweep.StartedAt
+			m.Coverage.LastSuccessAt = &checked
 			m.Sweep = nil
 		}
 		return added, nil
