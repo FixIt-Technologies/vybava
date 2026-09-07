@@ -48,6 +48,13 @@ func TestOperatorObserveProposeScoreJourney(t *testing.T) {
 	if _, err := run("Ten works for me.", "propose", observed.ID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := run("Draft approved, leave unsent", "decide", observed.ID, "--proposal", "1", "--action", "approve"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = run("", "history", "--limit", "1")
+	if err != nil || !strings.Contains(out, `"action": "approve"`) || !strings.Contains(out, `"delivery": "pending"`) {
+		t.Fatalf("history lost decision or changed delivery: %s: %v", out, err)
+	}
 	if _, err := run("Good wording; leave it unsent.", "feedback", observed.ID, "--proposal", "1"); err != nil {
 		t.Fatal(err)
 	}
