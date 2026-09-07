@@ -186,7 +186,11 @@ Existing message history is not imported as fresh attention. Subsequent checks
 capture new rows and revisit the captured range for edit/retraction timestamps,
 body-length changes and local removal. Local removal is not described as proof
 of sender retraction. Identity is checked again on the decoded message. Reads are
-bounded, with at most 25 capture/removal attempts per pass and a 30s pass deadline.
+bounded, with at most 25 capture/removal attempts per pass and a 30s read deadline.
+Waiting for the shared scanner lock counts against that deadline and honors
+shutdown cancellation without starting a source read. Publishing completed or
+partial progress still uses the separate state writer lock; disk publication is
+not covered by the read deadline.
 Metadata is paged (at most 501 rows per query) within a persisted high-water sweep.
 The attempt cursor advances even for unreadable records, so a failing prefix does
 not starve later messages; failures retry on the next sweep. Restart resumes the
@@ -219,6 +223,32 @@ database's older IDs. Use a separate state directory for an explicitly chosen
 new baseline; database replacement is not an automatic rebaseline. A fresh
 incoming message and live edited/retracted content still require runtime proof;
 synthetic test cases do not establish those real-world outcomes.
+
+### macOS installation and Full Disk Access
+
+Sign the final binary from the clean merged checkout **before** the coordinated
+upgrade of every operator writer. Go's ad-hoc signature identifies a build by its
+code hash, which changes on rebuild; use the stable Developer ID identity instead:
+
+```sh
+operator_binary=/absolute/path/to/final/vybava
+codesign --force --sign 'Developer ID Application: FixIt.app s.r.o. (YJ77YV2PNA)' --identifier com.fixit.vybava.operator --options runtime --timestamp "$operator_binary"
+codesign --verify --strict --verbose=2 "$operator_binary"
+codesign -d -r- --verbose=2 "$operator_binary"
+```
+
+Verify the designated requirement identifies `com.fixit.vybava.operator`, the
+Apple anchor and team `YJ77YV2PNA`, rather than a build-specific code hash. Preserve
+that verified signed artifact across all installed writer paths; do not rebuild
+or modify it after signing. Back up private trial state, stop old writers, install
+the signed binary everywhere, then restart through the coordinated upgrade.
+
+The user grants **Privacy & Security → Full Disk Access** to the responsible
+operator binary at `~/.local/share/vybava/operator-companion/vybava`. A grant to an
+interactive terminal does not prove that the background LaunchAgent can read
+Messages. Verify a successful source check under the actual background process
+after the grant; signature verification alone is not permission verification.
+Never copy the Messages database elsewhere to evade macOS privacy enforcement.
 
 Default state is `~/.local/share/vybava/operator`, configurable with `--state-dir`.
 The directory must be private (0700), files are 0600, and flock serializes local

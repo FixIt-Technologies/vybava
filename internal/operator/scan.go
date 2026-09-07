@@ -1,6 +1,7 @@
 package operator
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"path/filepath"
@@ -28,18 +29,21 @@ func (s Store) Scan(claudeRoot, codexRoot string, excluded []string) ([]string, 
 }
 
 func (s Store) scan(read func(*State) ([]string, error)) ([]string, error) {
-	return s.scanWithTime(read, true)
+	return s.scanWithTime(context.Background(), read, true)
 }
 
-func (s Store) scanWithTime(read func(*State) ([]string, error), updateScanTime bool) ([]string, error) {
+func (s Store) scanWithTime(ctx context.Context, read func(*State) ([]string, error), updateScanTime bool) ([]string, error) {
 	if err := s.prepare(); err != nil {
 		return nil, err
 	}
-	unlock, err := lock(filepath.Join(s.Dir, "scan.lock"))
+	unlock, err := lockContext(ctx, filepath.Join(s.Dir, "scan.lock"))
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	scanned, _, err := s.load()
 	if err != nil {
 		return nil, err
