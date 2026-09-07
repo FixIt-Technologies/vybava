@@ -148,11 +148,11 @@ a numeric score. Feedback is append-only and attached to that exact proposal,
 including after its source context changes. Neither feedback nor a rating sends
 or approves anything in the source app.
 
-Companion writes upgrade state v1 to v2 under the normal lock; read commands leave
+Companion writes upgrade older state to v4 under the normal lock; read commands leave
 the persisted version unchanged. Stop old watcher
 processes and retain a private backup before upgrading a live trial. Upgrade all
 CLI entry points used for that trial together: old binaries deliberately reject
-v2 instead of dropping its new feedback and scan fields. Do not downgrade by
+v4 instead of dropping feedback, review decisions or Messages coverage. Do not downgrade by
 editing the version. The snapshot wire contract has its own independent version 1.
 
 `propose <event>` reads proposed response text from stdin. The reply remains
@@ -171,6 +171,54 @@ after the conversation changes. Never invent a rating on the user's behalf.
 do not raise the average. There is no auto-send threshold or promotion command.
 
 ## State and verification
+
+### Messages source
+
+`operator messages --reader /absolute/path/to/imsg --once --json` establishes a
+baseline on the first successful read. Omit `--once` for periodic checks (30s by
+default, minimum 5s). `--db` defaults to `~/Library/Messages/chat.db`. Verify the
+pinned `openclaw/imsg` v0.15.2 archive digest and signature before selecting the
+reader. Its version is checked on every scan, including initialized restarts;
+a changed or unavailable reader records a coverage error. No bridge/injection helper is required or used. The reader runs with
+non-TTY stdin and only `messages.after` RPC; SQLite always uses `-readonly`.
+
+Existing message history is not imported as fresh attention. Subsequent checks
+capture new rows and revisit the captured range for edit/retraction timestamps,
+body-length changes and local removal. Local removal is not described as proof
+of sender retraction. Identity is checked again on the decoded message. Reads are
+bounded, with at most 25 capture/removal attempts per pass and a 30s pass deadline.
+Metadata is paged (at most 501 rows per query) within a persisted high-water sweep.
+The attempt cursor advances even for unreadable records, so a failing prefix does
+not starve later messages; failures retry on the next sweep. Restart resumes the
+stored sweep and seen IDs. Removal checks begin only after metadata enumeration
+finishes, share the capture budget, and re-read each missing identity before
+recording removal. Deferred or failed removals retain their stored records;
+restored rows are revisited in the next sweep. A partial sweep, any failed attempt,
+or newer rows outside its high water prevents complete-coverage certification.
+Successful coverage is dated from the sweep's oldest check, not its completion.
+A sweep lasting over two minutes (including time asleep or stopped), or an older
+persisted sweep without a start time, must finish and then run a fresh sweep before
+it can certify current coverage. Previously seen rows can change during a pause.
+Context changes supersede
+older proposals in that conversation. Messages observations are recorded, not
+automatically dispatched by the conservative Claude attention selector.
+
+Snapshot `sources` reports Messages scope, check time, last successful check and
+errors independently of the agent scanner. A partial/failed check cannot advance
+last success. Preparing or approving a Messages response requires successful
+coverage within two minutes; this does not replace re-reading the actual thread
+before proposing. Rejecting an existing proposal remains available. No command
+sends, marks messages read, opens the app or touches its composer.
+
+State v4 persists baseline, per-message fingerprints, sweep progress and coverage atomically with
+observations. Stop and upgrade every writer before using it on a live state-v3
+trial; retain a private backup. The native snapshot wire version remains 1.
+The baseline row's immutable GUID is checked on every pass. If that anchor is
+removed or replaced, coverage stops rather than silently skipping a replacement
+database's older IDs. Use a separate state directory for an explicitly chosen
+new baseline; database replacement is not an automatic rebaseline. A fresh
+incoming message and live edited/retracted content still require runtime proof;
+synthetic test cases do not establish those real-world outcomes.
 
 Default state is `~/.local/share/vybava/operator`, configurable with `--state-dir`.
 The directory must be private (0700), files are 0600, and flock serializes local

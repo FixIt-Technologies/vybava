@@ -21,6 +21,7 @@ const (
 	Claude   Source = "claude"
 	Codex    Source = "codex"
 	WhatsApp Source = "whatsapp"
+	Messages Source = "messages"
 )
 
 type Observation struct {
@@ -73,6 +74,7 @@ type State struct {
 	Cursors    map[string]Cursor `json:"cursors"`
 	Events     []Event           `json:"events"`
 	LastScanAt *time.Time        `json:"last_scan_at,omitempty"`
+	Messages   *MessagesState    `json:"messages,omitempty"`
 }
 
 type Store struct{ Dir string }
@@ -105,7 +107,7 @@ func (s Store) prepare() error {
 }
 
 func (s Store) load() (State, []byte, error) {
-	state := State{Version: 3, Roots: map[string]bool{}, Cursors: map[string]Cursor{}}
+	state := State{Version: 4, Roots: map[string]bool{}, Cursors: map[string]Cursor{}}
 	path := filepath.Join(s.Dir, "state.json")
 	var original []byte
 	if info, err := os.Lstat(path); err == nil {
@@ -120,11 +122,17 @@ func (s Store) load() (State, []byte, error) {
 		if err := json.Unmarshal(data, &state); err != nil {
 			return State{}, nil, fmt.Errorf("read operator state: %w", err)
 		}
-		if (state.Version < 1 || state.Version > 3) || state.Roots == nil || state.Cursors == nil {
+		if (state.Version < 1 || state.Version > 4) || state.Roots == nil || state.Cursors == nil {
 			return State{}, nil, errors.New("unsupported or incomplete operator state")
 		}
-		// Older binaries reject v3 instead of silently dropping review decisions.
-		state.Version = 3
+		if state.Messages != nil && (state.Messages.Database == "" || state.Messages.Baseline < 0 || state.Messages.Records == nil) {
+			return State{}, nil, errors.New("incomplete Messages source state")
+		}
+		if state.Messages != nil && state.Messages.Initialized && state.Messages.Baseline > 0 && state.Messages.AnchorGUID == "" {
+			return State{}, nil, errors.New("Messages baseline identity is missing")
+		}
+		// Older binaries must not silently drop Messages cursors/coverage.
+		state.Version = 4
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return State{}, nil, err
 	}
@@ -188,8 +196,8 @@ func digest(text string) string {
 }
 
 func (s *State) Observe(o Observation) (string, bool, error) {
-	if o.Source != Claude && o.Source != Codex && o.Source != WhatsApp {
-		return "", false, errors.New("source must be claude, codex or whatsapp")
+	if o.Source != Claude && o.Source != Codex && o.Source != WhatsApp && o.Source != Messages {
+		return "", false, errors.New("source must be claude, codex, whatsapp or messages")
 	}
 	if strings.TrimSpace(o.Key) == "" || strings.TrimSpace(o.Revision) == "" || strings.TrimSpace(o.Text) == "" {
 		return "", false, errors.New("key, revision and text are required")
@@ -264,6 +272,9 @@ func (s *State) Acknowledge(id string) error {
 func (s *State) Propose(id, text string) error {
 	e, err := s.Find(id)
 	if err != nil {
+		return err
+	}
+	if err := s.requireMessagesCoverage(e.Source); err != nil {
 		return err
 	}
 	if e.Superseded {

@@ -420,6 +420,6 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 	watch.Flags().StringVar(&attentionSince, "attention-since", "", "only recent, settled Claude questions/blockers/handoffs after this RFC3339 timestamp; requires --thread")
 	watch.Flags().DurationVar(&interval, "interval", 5*time.Second, "scan interval")
 	watch.Flags().BoolVar(&once, "once", false, "perform one scan then exit")
-	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback, history, decision, reviewAck)
+	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback, history, decision, reviewAck, rt.operatorMessagesCommand(store))
 	return c
 }
