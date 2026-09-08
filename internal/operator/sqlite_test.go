@@ -289,3 +289,136 @@ func TestIndexedAttentionQueueExcludesArchiveButKeepsBackpressure(t *testing.T) 
 		t.Fatal(err)
 	}
 }
+
+func TestIndexedQueueExcludesAcknowledgedCurrentEvents(t *testing.T) {
+	s, original := indexedFixture(t)
+	if err := s.With(func(st *State) error {
+		for i := 0; i < 200; i++ {
+			id, _, err := st.Observe(Observation{Source: Claude, Key: fmt.Sprintf("finished-%d", i), Revision: "1", Text: "finished"})
+			if err != nil {
+				return err
+			}
+			if err = st.Acknowledge(id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	id := original.Events[len(original.Events)-1].ID
+	if err := s.WithEvent(id, func(st *State) error { return st.Acknowledge(id) }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ViewQueue(func(st *State) error {
+		if len(st.Events) != 0 {
+			t.Fatalf("completed current event remained in queue: %d", len(st.Events))
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A human decision awaiting receipt remains actionable after event receipt.
+	if err := s.WithEvent(id, func(st *State) error { return st.Decide(id, 1, "approve", "") }); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ViewQueue(func(st *State) error {
+		if len(st.Events) != 1 {
+			t.Fatal("pending review disappeared")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIndexedSummaryUsesTransactionalCounters(t *testing.T) {
+	s, original := indexedFixture(t)
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	assertParity := func() {
+		t.Helper()
+		got, err := s.Summary()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var want Summary
+		if err = s.View(func(st *State) error { want = st.Summary(); return nil }); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("summary mismatch got %+v want %+v", got, want)
+		}
+	}
+	assertParity()
+	id := original.Events[len(original.Events)-1].ID
+	if err := s.WithEvent(id, func(st *State) error {
+		if err := st.Acknowledge(id); err != nil {
+			return err
+		}
+		return st.Decide(id, 1, "approve", "")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertParity()
+	if _, _, err := s.Observe(Observation{Source: Claude, Key: "session", Revision: "next", Text: "new context"}); err != nil {
+		t.Fatal(err)
+	}
+	assertParity()
+	if err := s.WithEvent(id, func(st *State) error {
+		e, err := st.Find(id)
+		if err != nil {
+			return err
+		}
+		e.Delivery = "failed"
+		e.AcknowledgedAt = nil
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertParity()
+	// A summary read must be independent of archive rows and proposal decoding.
+	before, err := s.Summary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := s.openDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Counter deltas roll back with an interrupted event transaction.
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := original.Events[len(original.Events)-1]
+	event.Proposals = nil
+	if _, err = saveEvent(tx, event); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	rolledBack, err := readSummary(db, summaryQuery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, rolledBack.Summary) {
+		t.Fatal("rolled back event changed counters")
+	}
+	if _, err = db.Exec("DROP TABLE events"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	after, err := s.Summary()
+	if err != nil {
+		t.Fatalf("summary read still depends on event archive: %v", err)
+	}
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("materialized summary changed without a journal update")
+	}
+}

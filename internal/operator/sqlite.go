@@ -21,6 +21,13 @@ const sqliteSchema = `
 PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS cursors (path TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS summary (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1), events INTEGER NOT NULL DEFAULT 0,
+ pending INTEGER NOT NULL DEFAULT 0, queued INTEGER NOT NULL DEFAULT 0,
+ acknowledged INTEGER NOT NULL DEFAULT 0, delivery_problems INTEGER NOT NULL DEFAULT 0,
+ proposals INTEGER NOT NULL DEFAULT 0, scored INTEGER NOT NULL DEFAULT 0,
+ score_total INTEGER NOT NULL DEFAULT 0, decisions_pending INTEGER NOT NULL DEFAULT 0);
+INSERT OR IGNORE INTO summary(singleton) VALUES(1);
 CREATE TABLE IF NOT EXISTS events (
  seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
  source TEXT NOT NULL, source_key TEXT NOT NULL, superseded INTEGER NOT NULL,
@@ -31,10 +38,9 @@ CREATE INDEX IF NOT EXISTS events_source ON events(source,source_key,superseded)
 CREATE INDEX IF NOT EXISTS events_proposals ON events(proposals) WHERE proposals>0;
 CREATE INDEX IF NOT EXISTS events_queue ON events(superseded,acknowledged,delivery);
 CREATE INDEX IF NOT EXISTS events_review ON events(review_pending) WHERE review_pending=1;
-CREATE INDEX IF NOT EXISTS events_summary ON events(superseded,acknowledged,delivery,proposals,scored,score_total,decisions_pending);
 CREATE INDEX IF NOT EXISTS events_attention ON events(attention,superseded,acknowledged,delivery,observed_at);
 INSERT OR IGNORE INTO meta VALUES('revision','0');
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 `
 
 func (s Store) Indexed() bool {
@@ -65,7 +71,7 @@ func (s Store) openDB() (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if version != 1 {
+	if version != 2 {
 		db.Close()
 		return nil, errors.New("unsupported operator database schema")
 	}
@@ -197,6 +203,15 @@ func saveMetadata(q sqlQuery, before, after State) error {
 	return nil
 }
 func saveEvent(q sqlQuery, e Event) (bool, error) {
+	// Read only the indexed row's scalar contribution. Both the event write and
+	// its counter delta belong to the caller's transaction, including import.
+	old, err := readSummary(q, `SELECT 1,(superseded=0 AND acknowledged=0 AND delivery='pending'),(acknowledged=0 AND delivery='queued'),acknowledged,(acknowledged=0 AND delivery IN ('submitting','failed')),proposals,scored,score_total,decisions_pending FROM events WHERE id=?`, e.ID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		old = summaryCounters{}
+	}
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return false, err
@@ -219,7 +234,22 @@ func saveEvent(q sqlQuery, e Event) (bool, error) {
 		return false, err
 	}
 	n, err := result.RowsAffected()
-	return n > 0, err
+	if err != nil || n == 0 {
+		return false, err
+	}
+	current := summaryCounters{Summary: (&State{Events: []Event{e}}).Summary(), ScoreTotal: total}
+	result, err = q.Exec(`UPDATE summary SET events=events+?,pending=pending+?,queued=queued+?,acknowledged=acknowledged+?,delivery_problems=delivery_problems+?,proposals=proposals+?,scored=scored+?,score_total=score_total+?,decisions_pending=decisions_pending+? WHERE singleton=1`, current.Events-old.Events, current.Pending-old.Pending, current.Queued-old.Queued, current.Acknowledged-old.Acknowledged, current.DeliveryProblems-old.DeliveryProblems, current.Proposals-old.Proposals, current.Scored-old.Scored, current.ScoreTotal-old.ScoreTotal, current.DecisionsPending-old.DecisionsPending)
+	if err != nil {
+		return false, err
+	}
+	n, err = result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	if n != 1 {
+		return false, errors.New("operator summary row is missing")
+	}
+	return true, nil
 }
 func bumpRevision(q sqlQuery) error {
 	_, err := q.Exec("UPDATE meta SET value=CAST(value AS INTEGER)+1 WHERE key='revision'")
@@ -497,7 +527,7 @@ func (s Store) WithEvent(id string, fn func(*State) error) error {
 	return s.indexedState(true, "WHERE id=?", []any{id}, fn)
 }
 
-const queueRows = "WHERE superseded=0 OR (acknowledged=0 AND delivery IN ('queued','submitting','failed')) OR review_pending=1 ORDER BY seq"
+const queueRows = "WHERE (superseded=0 AND acknowledged=0 AND delivery='pending') OR (acknowledged=0 AND delivery IN ('queued','submitting','failed')) OR review_pending=1 ORDER BY seq"
 
 func (s Store) ViewQueue(fn func(*State) error) error {
 	if !s.Indexed() {
@@ -663,15 +693,11 @@ func (s Store) Snapshot(before string, limit int) (CompanionSnapshot, error) {
 		r.Events = r.Events[:limit]
 		r.Next = r.Events[limit-1].ID
 	}
-	var total int
-	err = tx.QueryRow(`SELECT count(*),coalesce(sum(superseded=0 AND acknowledged=0 AND delivery='pending'),0),coalesce(sum(acknowledged=0 AND delivery='queued'),0),coalesce(sum(acknowledged),0),coalesce(sum(acknowledged=0 AND delivery IN ('submitting','failed')),0),coalesce(sum(proposals),0),coalesce(sum(scored),0),coalesce(sum(score_total),0),coalesce(sum(decisions_pending),0) FROM events`).Scan(&r.Summary.Events, &r.Summary.Pending, &r.Summary.Queued, &r.Summary.Acknowledged, &r.Summary.DeliveryProblems, &r.Summary.Proposals, &r.Summary.Scored, &total, &r.Summary.DecisionsPending)
+	counters, err := readSummary(tx, summaryQuery)
 	if err != nil {
 		return r, err
 	}
-	r.Summary.Sending = "human-only"
-	if r.Summary.Scored > 0 {
-		r.Summary.Average = float64(total) / float64(r.Summary.Scored)
-	}
+	r.Summary = counters.Summary
 	return r, tx.Commit()
 }
 
@@ -698,8 +724,18 @@ func (s Store) ViewMetadata(fn func(*State) error) error {
 	return s.indexedState(false, "WHERE 0", nil, fn)
 }
 func (s Store) Summary() (Summary, error) {
-	snapshot, err := s.Snapshot("", 1)
-	return snapshot.Summary, err
+	if !s.Indexed() {
+		var result Summary
+		err := s.View(func(st *State) error { result = st.Summary(); return nil })
+		return result, err
+	}
+	db, err := s.openDB()
+	if err != nil {
+		return Summary{}, err
+	}
+	defer db.Close()
+	counters, err := readSummary(db, summaryQuery)
+	return counters.Summary, err
 }
 
 func (s Store) scanIndexed(read func(*State) ([]string, error), updateScanTime bool) ([]string, error) {
@@ -787,14 +823,23 @@ func (s Store) scanIndexed(read func(*State) ([]string, error), updateScanTime b
 // ViewAttentionQueue bounds the periodic delivery inspection to recent signals,
 // while retaining all unacknowledged receipts for global backpressure.
 func (s Store) ViewAttentionQueue(since, now time.Time, fn func(*State) error) error {
+	return s.attentionQueue(false, since, now, fn)
+}
+func (s Store) WithAttentionQueue(since, now time.Time, fn func(*State) error) error {
+	return s.attentionQueue(true, since, now, fn)
+}
+func (s Store) attentionQueue(write bool, since, now time.Time, fn func(*State) error) error {
 	if !s.Indexed() {
+		if write {
+			return s.With(fn)
+		}
 		return s.View(fn)
 	}
 	earliest := now.Add(-10 * time.Minute)
 	if since.After(earliest) {
 		earliest = since
 	}
-	return s.indexedState(false, `WHERE id IN (
+	return s.indexedState(write, `WHERE id IN (
  SELECT id FROM events WHERE attention=1 AND superseded=0 AND acknowledged=0 AND delivery='pending' AND observed_at>? AND observed_at<=?
  UNION SELECT id FROM events WHERE acknowledged=0 AND delivery IN ('queued','submitting','failed')
  UNION SELECT id FROM events WHERE review_pending=1) ORDER BY seq`, []any{earliest.UnixNano(), now.Add(-20 * time.Second).UnixNano()}, fn)
@@ -805,4 +850,32 @@ func (s Store) ViewReviewQueue(fn func(*State) error) error {
 		return s.View(fn)
 	}
 	return s.indexedState(false, "WHERE review_pending=1 ORDER BY seq", nil, fn)
+}
+func (s Store) WithReviewQueue(fn func(*State) error) error {
+	if !s.Indexed() {
+		return s.With(fn)
+	}
+	return s.indexedState(true, "WHERE review_pending=1 ORDER BY seq", nil, fn)
+}
+
+// summary is a singleton updated by saveEvent in the same write transaction.
+// Polling reads nine scalars regardless of how much history has accumulated.
+const summaryQuery = `SELECT events,pending,queued,acknowledged,delivery_problems,proposals,scored,score_total,decisions_pending FROM summary WHERE singleton=1`
+
+type summaryCounters struct {
+	Summary
+	ScoreTotal int
+}
+
+func readSummary(q sqlQuery, query string, args ...any) (summaryCounters, error) {
+	var r summaryCounters
+	err := q.QueryRow(query, args...).Scan(&r.Events, &r.Pending, &r.Queued, &r.Acknowledged, &r.DeliveryProblems, &r.Proposals, &r.Scored, &r.ScoreTotal, &r.DecisionsPending)
+	if err != nil {
+		return r, err
+	}
+	r.Sending = "human-only"
+	if r.Scored > 0 {
+		r.Average = float64(r.ScoreTotal) / float64(r.Scored)
+	}
+	return r, nil
 }
