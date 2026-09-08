@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -241,6 +242,67 @@ func TestIndexedMigrationRecoversGuardWithoutDatabase(t *testing.T) {
 	}
 	if page.Events[0].ID != original.Events[len(original.Events)-1].ID {
 		t.Fatal("recovery lost history")
+	}
+}
+
+func TestEmptyIndexedMigrationRetainsRecoveryArchive(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	if err := os.Chmod(s.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir, "state.pre-sqlite.json")); err != nil {
+		t.Fatal(err)
+	}
+	// Reproduce the publication window: guard exists, database not yet renamed.
+	if err := os.Remove(filepath.Join(s.Dir, "state.sqlite")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.History("", 1)
+	if err != nil || len(page.Events) != 0 {
+		t.Fatalf("empty recovery: %#v, %v", page, err)
+	}
+}
+
+func TestPreparedPagesUseSequenceIndex(t *testing.T) {
+	s, _ := indexedFixture(t)
+	if err := s.Migrate(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := s.openDB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, query := range []string{
+		"SELECT data FROM events WHERE proposals>0 ORDER BY seq DESC LIMIT 51",
+		"SELECT data FROM events WHERE proposals>0 AND seq<100 ORDER BY seq DESC LIMIT 51",
+	} {
+		rows, err := db.Query("EXPLAIN QUERY PLAN " + query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+				t.Fatal(err)
+			}
+			plan += detail + "\n"
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		rows.Close()
+		if !strings.Contains(plan, "events_proposals") || strings.Contains(plan, "TEMP B-TREE") {
+			t.Fatalf("prepared page is not bounded by sequence index: %s", plan)
+		}
 	}
 }
 

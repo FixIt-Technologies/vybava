@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS events (
  scored INTEGER NOT NULL, score_total INTEGER NOT NULL, review_pending INTEGER NOT NULL, decisions_pending INTEGER NOT NULL,
  attention INTEGER NOT NULL, observed_at INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS events_source ON events(source,source_key,superseded);
-CREATE INDEX IF NOT EXISTS events_proposals ON events(proposals) WHERE proposals>0;
+CREATE INDEX IF NOT EXISTS events_proposals ON events(seq) WHERE proposals>0;
 CREATE INDEX IF NOT EXISTS events_queue ON events(superseded,acknowledged,delivery);
 CREATE INDEX IF NOT EXISTS events_receipts ON events(acknowledged,delivery);
 CREATE INDEX IF NOT EXISTS events_review ON events(review_pending) WHERE review_pending=1;
@@ -302,6 +302,13 @@ func (s Store) Migrate() error {
 		}
 		if state.Messages != nil && (state.Messages.Database == "" || state.Messages.Baseline < 0 || state.Messages.Records == nil || (state.Messages.Initialized && state.Messages.Baseline > 0 && state.Messages.AnchorGUID == "")) {
 			return errors.New("invalid Messages migration recovery archive")
+		}
+	}
+	if original == nil {
+		// A fresh directory still needs recovery after the guard is published.
+		original, err = json.Marshal(state)
+		if err != nil {
+			return err
 		}
 	}
 	if original != nil {
