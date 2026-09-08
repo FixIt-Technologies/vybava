@@ -249,3 +249,20 @@ func TestFixLeavesQuotedScalarWithCommentAlone(t *testing.T) {
 		t.Errorf("a trailing comment on a quoted scalar was absorbed into the value:\n%s", got)
 	}
 }
+
+func TestLintOfNestedNoteResolvesItsHome(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	write(t, filepath.Join(root, "MEMORY.md"), "# Memory\n\n- [Root](project-root.md) — When testing memorylint.\n- [Sub](inbox/project-sub.md) — When testing nested notes.\n")
+	write(t, filepath.Join(root, "project-root.md"), "---\nname: project-root\ndescription: When testing memorylint.\ntype: project\nstatus: active\n---\n\nRoot.\n")
+	write(t, filepath.Join(root, "inbox", "project-sub.md"), "---\nname: project-sub\ndescription: When testing nested notes.\ntype: project\nstatus: active\n---\n\nSee [[project-root]].\n")
+
+	report, err := memorylint.Lint([]string{filepath.Join(root, "inbox", "project-sub.md")})
+	if err != nil {
+		t.Fatalf("Lint() error = %v", err)
+	}
+	if len(report.Findings) != 0 || report.Files != 1 {
+		t.Fatalf("Lint(nested note) = files %d, findings %#v; want a clean single note linted against its home", report.Files, report.Findings)
+	}
+}

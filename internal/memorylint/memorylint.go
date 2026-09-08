@@ -169,7 +169,22 @@ func lintScope(absolute string, isDir bool) (root, scope string) {
 	if isDir {
 		return absolute, ""
 	}
-	return filepath.Dir(absolute), absolute
+	return memoryHome(absolute), absolute
+}
+
+// memoryHome returns the nearest ancestor of a note that carries a MEMORY.md,
+// so a nested note is linted against its whole home (index, siblings, links);
+// without one, the note's own directory.
+func memoryHome(note string) string {
+	dir := filepath.Dir(note)
+	for cur := dir; ; cur = filepath.Dir(cur) {
+		if _, err := os.Stat(filepath.Join(cur, "MEMORY.md")); err == nil {
+			return cur
+		}
+		if filepath.Dir(cur) == cur {
+			return dir
+		}
+	}
 }
 
 // handoffsHome returns the `.claude/handoffs` directory a path sits in or
