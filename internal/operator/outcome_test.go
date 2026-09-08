@@ -3,7 +3,11 @@ package operator
 import "testing"
 
 func TestOutcomeRequiresEvidenceAndDoesNotFollowApproval(t *testing.T) {
-	s := State{Events: []Event{{ID: "event", Proposals: []Proposal{{Decision: &ReviewDecision{Action: "approve"}}}}}}
+	s := State{Version: 4, Events: []Event{{ID: "event", Proposals: []Proposal{{Decision: &ReviewDecision{Action: "approve"}}}}}}
+	if err := s.RecordOutcome("event", 1, "executed", "legacy writer would lose this"); err == nil {
+		t.Fatal("outcome accepted before indexed migration")
+	}
+	s.Version = 5
 	if len(s.Events[0].Outcomes) != 0 {
 		t.Fatal("approval must not imply execution")
 	}

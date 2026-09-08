@@ -30,6 +30,7 @@ render rows lazily, and avoid loading history while its workspace is hidden.
 `operator record-outcome EVENT --proposal N --status executed|verified|failed`
 records actual evidence supplied on stdin. It performs no action. Verification
 requires an earlier execution record; approval alone never creates either record.
+Outcome recording requires indexed migration, so legacy JSON writers cannot drop it.
 The records remain attached to the exact proposal even after source context moves
 on. Treat their evidence as reported evidence, not an automatic independent audit.
 

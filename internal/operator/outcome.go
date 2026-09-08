@@ -16,6 +16,9 @@ type Outcome struct {
 }
 
 func (s *State) RecordOutcome(id string, proposal int, status, evidence string) error {
+	if s.Version < 5 {
+		return errors.New("recording outcomes requires explicit indexed migration")
+	}
 	event, err := s.Find(id)
 	if err != nil {
 		return err
