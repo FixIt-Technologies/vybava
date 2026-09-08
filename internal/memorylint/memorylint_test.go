@@ -256,7 +256,7 @@ func TestLintOfNestedNoteResolvesItsHome(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, "MEMORY.md"), "# Memory\n\n- [Root](project-root.md) — When testing memorylint.\n- [Sub](inbox/project-sub.md) — When testing nested notes.\n")
 	write(t, filepath.Join(root, "project-root.md"), "---\nname: project-root\ndescription: When testing memorylint.\ntype: project\nstatus: active\n---\n\nRoot.\n")
-	write(t, filepath.Join(root, "inbox", "project-sub.md"), "---\nname: project-sub\ndescription: When testing nested notes.\ntype: project\nstatus: active\n---\n\nSee [[project-root]].\n")
+	writeDeep(t, filepath.Join(root, "inbox", "project-sub.md"), "---\nname: project-sub\ndescription: When testing nested notes.\ntype: project\nstatus: active\n---\n\nSee [[project-root]].\n")
 
 	report, err := memorylint.Lint([]string{filepath.Join(root, "inbox", "project-sub.md")})
 	if err != nil {
