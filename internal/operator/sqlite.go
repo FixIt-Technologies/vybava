@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_source ON events(source,source_key,superseded);
 CREATE INDEX IF NOT EXISTS events_proposals ON events(proposals) WHERE proposals>0;
 CREATE INDEX IF NOT EXISTS events_queue ON events(superseded,acknowledged,delivery);
+CREATE INDEX IF NOT EXISTS events_receipts ON events(acknowledged,delivery);
 CREATE INDEX IF NOT EXISTS events_review ON events(review_pending) WHERE review_pending=1;
 CREATE INDEX IF NOT EXISTS events_attention ON events(attention,superseded,acknowledged,delivery,observed_at);
 INSERT OR IGNORE INTO meta VALUES('revision','0');
