@@ -63,8 +63,8 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		var summary operator.Summary
-		if err := s.View(func(state *operator.State) error { summary = state.Summary(); return nil }); err != nil {
+		summary, err := s.Summary()
+		if err != nil {
 			return err
 		}
 		if rt.json {
@@ -111,7 +111,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 			return err
 		}
 		var event operator.Event
-		if err := s.View(func(state *operator.State) error {
+		if err := s.ViewEvent(args[0], func(state *operator.State) error {
 			e, err := state.Find(args[0])
 			if err == nil {
 				event = *e
@@ -140,9 +140,8 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if dec.Decode(new(json.RawMessage)) != io.EOF {
 			return errors.New("expected one observation JSON object")
 		}
-		var id string
-		var fresh bool
-		if err := s.With(func(state *operator.State) error { var err error; id, fresh, err = state.Observe(o); return err }); err != nil {
+		id, fresh, err := s.Observe(o)
+		if err != nil {
 			return err
 		}
 		return output(struct {
@@ -155,7 +154,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		if err := s.With(func(state *operator.State) error { return state.Acknowledge(args[0]) }); err != nil {
+		if err := s.WithEvent(args[0], func(state *operator.State) error { return state.Acknowledge(args[0]) }); err != nil {
 			return err
 		}
 		return output(struct {
@@ -171,7 +170,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		if err := s.With(func(state *operator.State) error { return state.Propose(args[0], text) }); err != nil {
+		if err := s.WithEvent(args[0], func(state *operator.State) error { return state.Propose(args[0], text) }); err != nil {
 			return err
 		}
 		return output(struct {
@@ -185,7 +184,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		if err := s.With(func(state *operator.State) error { return state.Rate(args[0], proposal, score, correction) }); err != nil {
+		if err := s.WithEvent(args[0], func(state *operator.State) error { return state.Rate(args[0], proposal, score, correction) }); err != nil {
 			return err
 		}
 		return output(struct {
@@ -195,16 +194,43 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 	rate.Flags().IntVar(&score, "score", 0, "human correctness score, 1 (wrong) to 5 (ready unchanged)")
 	rate.Flags().IntVar(&proposal, "proposal", 0, "explicit proposal number from show (starts at 1)")
 	rate.Flags().StringVar(&correction, "correction", "", "optional human correction or explanation")
-	snapshot := &cobra.Command{Use: "snapshot", Short: "Read prepared work and last successful source scan for a local companion", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+	var snapshotBefore string
+	var snapshotLimit int
+	snapshot := &cobra.Command{Use: "snapshot", Short: "Read a bounded page of prepared work and source coverage", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
 		s, err := store()
 		if err != nil {
 			return err
 		}
-		var result operator.CompanionSnapshot
-		if err := s.View(func(state *operator.State) error { result = state.Snapshot(); return nil }); err != nil {
+		result, err := s.Snapshot(snapshotBefore, snapshotLimit)
+		if err != nil {
 			return err
 		}
 		return output(result)
+	}}
+	snapshot.Flags().StringVar(&snapshotBefore, "before", "", "event ID cursor from the previous prepared-work page")
+	snapshot.Flags().IntVar(&snapshotLimit, "limit", 50, "page size, 1–200")
+	revision := &cobra.Command{Use: "revision", Short: "Read content revision and lightweight source liveness", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		result, err := s.Revision()
+		if err != nil {
+			return err
+		}
+		return output(result)
+	}}
+	migrate := &cobra.Command{Use: "migrate", Short: "Import preserved JSON history into the indexed store; stop all old writers first", Args: cobra.NoArgs, RunE: func(*cobra.Command, []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		if err := s.Migrate(); err != nil {
+			return err
+		}
+		return output(struct {
+			Migrated bool `json:"migrated"`
+		}{true})
 	}}
 	var feedbackProposal int
 	feedback := &cobra.Command{Use: "feedback EVENT", Short: "Record actual human feedback from stdin without assigning a score", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
@@ -216,7 +242,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		if err := s.With(func(state *operator.State) error { return state.AddFeedback(args[0], feedbackProposal, text) }); err != nil {
+		if err := s.WithEvent(args[0], func(state *operator.State) error { return state.AddFeedback(args[0], feedbackProposal, text) }); err != nil {
 			return err
 		}
 		return output(struct {
@@ -231,12 +257,8 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		var result operator.HistoryPage
-		if err := s.View(func(state *operator.State) error {
-			var err error
-			result, err = state.History(historyBefore, historyLimit)
-			return err
-		}); err != nil {
+		result, err := s.History(historyBefore, historyLimit)
+		if err != nil {
 			return err
 		}
 		return output(result)
@@ -254,7 +276,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		if err := s.With(func(state *operator.State) error {
+		if err := s.WithEvent(args[0], func(state *operator.State) error {
 			return state.Decide(args[0], decisionProposal, decisionAction, note)
 		}); err != nil {
 			return err
@@ -271,7 +293,7 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		if err != nil {
 			return err
 		}
-		if err := s.With(func(state *operator.State) error { return state.AcknowledgeReview(args[0], acknowledgedProposal) }); err != nil {
+		if err := s.WithEvent(args[0], func(state *operator.State) error { return state.AcknowledgeReview(args[0], acknowledgedProposal) }); err != nil {
 			return err
 		}
 		return output(struct {
@@ -279,6 +301,28 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		}{args[0]})
 	}}
 	reviewAck.Flags().IntVar(&acknowledgedProposal, "proposal", 0, "exact reviewed proposal number")
+	var outcomeProposal int
+	var outcomeStatus string
+	outcome := &cobra.Command{Use: "record-outcome EVENT", Short: "Record actual execution or verification evidence from stdin; never executes an action", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+		s, err := store()
+		if err != nil {
+			return err
+		}
+		evidence, err := readInput()
+		if err != nil {
+			return err
+		}
+		if err := s.WithEvent(args[0], func(state *operator.State) error {
+			return state.RecordOutcome(args[0], outcomeProposal, outcomeStatus, evidence)
+		}); err != nil {
+			return err
+		}
+		return output(struct {
+			Event string `json:"outcome_recorded"`
+		}{args[0]})
+	}}
+	outcome.Flags().IntVar(&outcomeProposal, "proposal", 0, "exact proposal number")
+	outcome.Flags().StringVar(&outcomeStatus, "status", "", "executed, verified or failed; actual evidence required")
 	queue := func(ctx context.Context, thread, message string) (string, error) {
 		b, err := exec.CommandContext(ctx, "codex", "queue", "--thread", thread, "--message", message).CombinedOutput()
 		if err != nil {
@@ -339,14 +383,12 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 		}
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
 		var nextDispatch time.Time
 		for {
 			if watchThread != "" {
 				var reviewID string
 				var reviewNumber int
-				if err := s.View(func(state *operator.State) error { reviewID, reviewNumber = state.NextReview(); return nil }); err != nil {
+				if err := s.ViewReviewQueue(func(state *operator.State) error { reviewID, reviewNumber = state.NextReview(); return nil }); err != nil {
 					return err
 				}
 				if reviewID != "" {
@@ -361,8 +403,17 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 			if err != nil {
 				return err
 			}
-			if err := s.View(func(state *operator.State) error {
-				next, pending = state.NextDelivery(), state.Summary().Pending
+			summary, err := s.Summary()
+			if err != nil {
+				return err
+			}
+			pending = summary.Pending
+			readQueue := s.ViewQueue
+			if !since.IsZero() {
+				readQueue = func(fn func(*operator.State) error) error { return s.ViewAttentionQueue(since, now(), fn) }
+			}
+			if err := readQueue(func(state *operator.State) error {
+				next = state.NextDelivery()
 				if !since.IsZero() {
 					var err error
 					next, err = state.ReadyAttention(since, now())
@@ -406,10 +457,10 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 			if once {
 				return nil
 			}
-			select {
-			case <-ctx.Done():
+			// A slow scan must still get a full rest interval; a ticker would
+			// leave a queued tick and immediately start another expensive scan.
+			if err := waitMessages(ctx, interval); err != nil {
 				return nil
-			case <-ticker.C:
 			}
 		}
 	}}
@@ -420,6 +471,6 @@ func (rt *runtime) operatorCommandWithClock(use string, now func() time.Time) *c
 	watch.Flags().StringVar(&attentionSince, "attention-since", "", "only recent, settled Claude questions/blockers/handoffs after this RFC3339 timestamp; requires --thread")
 	watch.Flags().DurationVar(&interval, "interval", 5*time.Second, "scan interval")
 	watch.Flags().BoolVar(&once, "once", false, "perform one scan then exit")
-	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, feedback, history, decision, reviewAck, rt.operatorMessagesCommand(store))
+	c.AddCommand(status, list, show, observe, ack, propose, rate, deliver, watch, snapshot, revision, migrate, feedback, history, decision, reviewAck, outcome, rt.operatorMessagesCommand(store))
 	return c
 }

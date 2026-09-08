@@ -4,6 +4,36 @@ Codex is the main operator. This applet provides local observation, delivery and
 evaluation state; it does not implement an AI model, a WhatsApp connector, UI
 automation, or sending. Eve can be a destination for separately delegated work.
 
+## Indexed storage and resource limits
+
+Run `operator migrate --state-dir DIR` explicitly after stopping **all** writers
+and taking a private backup. It imports existing event identities, proposals,
+feedback, review decisions, delivery receipts and source cursors into local SQLite.
+The original JSON is retained as `state.pre-sqlite.json`; `state.json` becomes a
+version-5 marker so old binaries refuse to write. Never edit that marker or restore
+an old archive over new indexed records. Installing a binary alone does not migrate
+the store or restart a watcher.
+
+SQLite stores events separately from source metadata and cursors. Event reads and
+updates address the event ID; history uses indexed, stable event-ID cursors.
+`operator revision --json` returns a content `revision`, `last_scan_at`, and optional
+`sources`. Heartbeat-only changes do not advance the content revision. Consumers
+should update liveness from this lightweight response and fetch content only when
+the revision changes. Scan loops wait a full interval after finishing their work.
+
+`operator snapshot --limit 50 [--before EVENT]` returns one page of prepared-work
+events, with optional `next`. Summary counts are global, including
+`decisions_pending`; never compute a global review badge from one page. History
+and snapshots accept page sizes 1–200. Native consumers should retain one page,
+render rows lazily, and avoid loading history while its workspace is hidden.
+
+`operator record-outcome EVENT --proposal N --status executed|verified|failed`
+records actual evidence supplied on stdin. It performs no action. Verification
+requires an earlier execution record; approval alone never creates either record.
+Outcome recording requires indexed migration, so legacy JSON writers cannot drop it.
+The records remain attached to the exact proposal even after source context moves
+on. Treat their evidence as reported evidence, not an automatic independent audit.
+
 ## Companion history and review
 
 `operator history --limit 50` returns every recorded observation, newest ingested
@@ -24,11 +54,9 @@ delivery is not automatically replayed. After inspecting the referenced decision
 the operator records actual receipt with `review-ack EVENT --proposal N`.
 Receipt is separate from queue acceptance and from fulfilling a revision request.
 
-Snapshots advertise `history` and `review-decisions` capabilities. Storage is
-version 3: stop older watcher/writer processes before installing this build, and
-upgrade every binary that writes the same state directory. Older v2 binaries
-reject v3 rather than dropping decisions. Back up the private state before the
-upgrade; never roll it back over new observations or feedback.
+Snapshots advertise `history` and `review-decisions` capabilities. Indexed stores
+also advertise `indexed-revision`. Upgrade every binary that writes the same state
+directory before migration; never roll storage back over new observations or feedback.
 
 ## Start with actual Claude activity
 

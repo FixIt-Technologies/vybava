@@ -48,7 +48,7 @@ func (rt *runtime) operatorMessagesCommand(store func() (operator.Store, error))
 				return err
 			}
 			var coverage operator.SourceCoverage
-			if err := s.View(func(state *operator.State) error {
+			if err := s.ViewMetadata(func(state *operator.State) error {
 				if state.Messages == nil {
 					return errors.New("Messages source state is missing")
 				}

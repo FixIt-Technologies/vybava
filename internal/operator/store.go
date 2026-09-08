@@ -59,10 +59,14 @@ type Event struct {
 	AcknowledgedAt *time.Time `json:"acknowledged_at,omitempty"`
 	Superseded     bool       `json:"superseded"`
 	Proposals      []Proposal `json:"proposals,omitempty"`
+	Outcomes       []Outcome  `json:"outcomes,omitempty"`
 }
 
 type Cursor struct {
-	Offset int64 `json:"offset"`
+	Offset     int64     `json:"offset"`
+	Size       int64     `json:"size,omitempty"`
+	Modified   int64     `json:"modified,omitempty"`
+	VerifiedAt time.Time `json:"verified_at,omitempty"`
 	// The prefix detects replacement, including replacement by a larger file.
 	Prefix     string `json:"prefix"`
 	PrefixSize int    `json:"prefix_size"`
@@ -82,6 +86,9 @@ type Store struct{ Dir string }
 // View reads the last atomically published state without waiting for a scan.
 // Callback changes are local only; writers must use With.
 func (s Store) View(fn func(*State) error) error {
+	if s.Indexed() {
+		return s.indexedState(false, "ORDER BY seq", nil, fn)
+	}
 	if err := s.prepare(); err != nil {
 		return err
 	}
@@ -140,6 +147,9 @@ func (s Store) load() (State, []byte, error) {
 }
 
 func (s Store) With(fn func(*State) error) error {
+	if s.Indexed() {
+		return s.indexedState(true, "ORDER BY seq", nil, fn)
+	}
 	if err := s.prepare(); err != nil {
 		return err
 	}
@@ -310,6 +320,7 @@ func (s *State) Rate(id string, proposal, score int, correction string) error {
 }
 
 type Summary struct {
+	DecisionsPending int     `json:"decisions_pending"`
 	Events           int     `json:"events"`
 	Pending          int     `json:"pending"`
 	Queued           int     `json:"queued"`
@@ -341,6 +352,9 @@ func (s *State) Summary() Summary {
 			}
 		}
 		for _, p := range e.Proposals {
+			if !e.Superseded && !p.Superseded && p.Decision == nil {
+				r.DecisionsPending++
+			}
 			r.Proposals++
 			if p.Rating != nil {
 				r.Scored++

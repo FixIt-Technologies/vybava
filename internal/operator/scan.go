@@ -44,6 +44,10 @@ func (s Store) scanWithTime(ctx context.Context, read func(*State) ([]string, er
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if s.Indexed() {
+		return s.scanIndexed(read, updateScanTime)
+	}
+
 	scanned, _, err := s.load()
 	if err != nil {
 		return nil, err
