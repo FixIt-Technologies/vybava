@@ -23,7 +23,7 @@ func (s Store) DeliverReview(ctx context.Context, id string, proposal int, threa
 	if err != nil {
 		return err
 	}
-	if err := s.With(func(state *State) error {
+	if err := s.WithQueue(func(state *State) error {
 		next, number := state.NextReview()
 		if next != id || number != proposal {
 			return errors.New("review is no longer ready for delivery")
@@ -50,7 +50,7 @@ func (s Store) DeliverReview(ctx context.Context, id string, proposal int, threa
 	queueCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	receipt, queueErr := queue(queueCtx, thread, message)
-	saveErr := s.With(func(state *State) error {
+	saveErr := s.WithEvent(id, func(state *State) error {
 		r, err := state.Review(id, proposal)
 		if err != nil {
 			return err
@@ -111,7 +111,7 @@ func (s Store) deliver(ctx context.Context, id, thread string, queue Queue, vali
 	if strings.TrimSpace(thread) == "" {
 		return errors.New("an explicit Codex thread is required")
 	}
-	if err := s.With(func(state *State) error {
+	if err := s.WithQueue(func(state *State) error {
 		if validate != nil {
 			if err := validate(state); err != nil {
 				return err
@@ -148,7 +148,7 @@ func (s Store) deliver(ctx context.Context, id, thread string, queue Queue, vali
 	queueCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	receipt, queueErr := queue(queueCtx, thread, message)
-	saveErr := s.With(func(state *State) error {
+	saveErr := s.WithEvent(id, func(state *State) error {
 		e, err := state.Find(id)
 		if err != nil {
 			return err

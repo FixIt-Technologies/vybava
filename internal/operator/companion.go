@@ -13,6 +13,7 @@ type Feedback struct {
 }
 
 type CompanionSnapshot struct {
+	Next         string           `json:"next,omitempty"`
 	Version      int              `json:"version"`
 	CheckedAt    time.Time        `json:"checked_at"`
 	Summary      Summary          `json:"summary"`

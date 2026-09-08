@@ -65,6 +65,12 @@ func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observa
 	if !info.Mode().IsRegular() {
 		return nil, nil
 	}
+	cur, known := s.Cursors[path]
+	// Skip opening unchanged completed files. Periodically recheck their prefix
+	// as well, so restored timestamps cannot indefinitely hide replacement.
+	if !baseline && known && cur.Offset == info.Size() && cur.Size == info.Size() && cur.Modified == info.ModTime().UnixNano() && time.Since(cur.VerifiedAt) < time.Minute {
+		return nil, nil
+	}
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil // session was removed between stat and open
@@ -73,7 +79,6 @@ func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observa
 		return nil, err
 	}
 	defer f.Close()
-	cur, known := s.Cursors[path]
 	if baseline {
 		cur.Offset = info.Size()
 		// Baseline only through the last newline; an incomplete first observation
@@ -160,6 +165,7 @@ func (s *State) scanFile(path string, baseline bool, parse func([]byte) (Observa
 		cur.Offset += int64(len(line))
 		consumed += len(line)
 	}
+	cur.Size, cur.Modified, cur.VerifiedAt = info.Size(), info.ModTime().UnixNano(), time.Now().UTC()
 	s.Cursors[path] = cur
 	return added, nil
 }
