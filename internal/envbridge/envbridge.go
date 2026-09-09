@@ -14,7 +14,6 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -57,6 +56,9 @@ func Input(r io.Reader, keys []string) (map[string]string, error) {
 }
 
 func privateParent(path string) error {
+	if !platformSupported {
+		return errors.New("environment bridge requires Unix ownership checks; Windows is unsupported")
+	}
 	if !filepath.IsAbs(path) {
 		return errors.New("socket path must be absolute")
 	}
@@ -64,8 +66,7 @@ func privateParent(path string) error {
 	if err != nil {
 		return errors.New("create a private socket directory first (mode 0700)")
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !info.IsDir() || info.Mode().Perm()&0077 != 0 || !ok || int(stat.Uid) != os.Getuid() {
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 || !ownedByCurrentUser(info) {
 		return errors.New("socket directory must be owned by this user and private (mode 0700)")
 	}
 	return nil

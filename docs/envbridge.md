@@ -11,6 +11,10 @@ Status and errors omit values. An absent or expired server is an error, never a
 fallback to saved credentials. Processes running as the same OS user are trusted;
 this is not a substitute for separate user identities.
 
+The bridge requires Unix ownership and permission checks (macOS/Linux). Windows
+builds retain the other applets; envbridge refuses directories on Windows rather
+than treating Unix permission bits as an ACL check.
+
 ```text
 envbridge serve --socket /private/workspace/env.sock --key TOKEN --ttl 2m --json
 envbridge read --socket /private/workspace/env.sock --key TOKEN --format shell
