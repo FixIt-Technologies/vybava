@@ -55,6 +55,12 @@ items:
     description: Render ~/.claude skills and commands into ~/.agents/skills, the structure Codex actually discovers — nesting preserved, each command a source-command skill, duplicate discovery suppressed in config.toml.
     applet: codexsync
 
+  - id: codexusage
+    kind: applet
+    status: experimental
+    description: Explain where the Codex plan limit went — per-thread spend from ~/.codex rollouts, the derived allowance, and the runway left at the measured burn rate.
+    applet: codexusage
+
   - id: reconcile
     kind: applet
     status: experimental
@@ -156,6 +162,7 @@ groups:
     items:
       - envbridge
       - codexsync
+      - codexusage
       - hotfix
       - hotfix-lane
       - reclaim

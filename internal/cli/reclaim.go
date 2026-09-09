@@ -173,10 +173,11 @@ func (rt *runtime) reclaimList(plan []reclaim.Step) error {
 }
 
 func trunc(s string, n int) string {
-	if len(s) <= n {
+	runs := []rune(s)
+	if len(runs) <= n {
 		return s
 	}
-	return s[:n-1] + "…"
+	return string(runs[:n-1]) + "…"
 }
 
 func firstLine(s string) string {

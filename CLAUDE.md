@@ -69,6 +69,14 @@ explicit export/tests; do not use them in polling paths.
 under the writer lock, preserving concurrent feedback. `attention.go` owns the
 conservative, freshness-gated Claude attention selection; the CLI only wires it.
 
+`internal/codexusage` reads `~/.codex` rollouts read-only and attributes plan-limit
+spend per Codex process. Two accounting rules are load-bearing and documented in
+`docs/codexusage.md`: `cached_input_tokens` is a SUBSET of `input_tokens` (never sum
+them), and a `token_count` event repeating an unchanged `total_token_usage` is a
+rate-limit refresh, not a call — recorded unbilled so its percentage survives without
+double-billing. `rollout.go` owns parsing and the mtime prefilter; `live.go` owns
+`ps`/`lsof` enrichment and must always degrade to a warning.
+
 `internal/plaud` reads the Plaud account directly (PKCE login, vault-injected
 refresh token, cached access token only); the manual-only skill is
 `skills/plaud/`. `docs/plaud.md` has the auth model and the API map.
