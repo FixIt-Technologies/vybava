@@ -304,3 +304,71 @@ func fakeProcs(byPID map[int]string) func(context.Context, string, ...string) ([
 		return []byte(out.String()), nil
 	}
 }
+
+// A live thread that spent nothing is worth naming — it is a tab to close
+// before it wakes up — but only when asked for, and only while its process
+// lives. A thread whose process is gone and whose spend is outside the window
+// is not news and must not pad the report.
+func TestIdleThreadsAreListedOnlyWhenLiveAndRequested(t *testing.T) {
+	home := t.TempDir()
+	spending := rollout(t, home, "iiii", "/work/busy", "2026-09-09T09:00:00Z",
+		call("2026-09-09T10:00:00Z", 500, 500, 0, "pro", 20, 1789437323))
+	parked := rollout(t, home, "jjjj", "/work/parked", "2026-09-08T09:00:00Z",
+		call("2026-09-08T10:00:00Z", 500, 500, 0, "pro", 5, 1789437323))
+	rollout(t, home, "kkkk", "/work/ended", "2026-09-08T09:00:00Z",
+		call("2026-09-08T11:00:00Z", 500, 500, 0, "pro", 6, 1789437323))
+
+	procs := fakeProcs(map[int]string{4242: spending, 4343: parked})
+	opts := Options{Since: since(t, "2026-09-09T00:00:00Z")}
+
+	report, err := Run(context.Background(), env(t, home, procs), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Idle) != 0 {
+		t.Fatalf("idle rows = %d, want none until --idle is asked for", len(report.Idle))
+	}
+
+	opts.IncludeIdle = true
+	report, err = Run(context.Background(), env(t, home, procs), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Sessions) != 1 || report.Sessions[0].CWD != "/work/busy" {
+		t.Fatalf("spending rows = %+v, want only /work/busy", report.Sessions)
+	}
+	if len(report.Idle) != 1 || report.Idle[0].CWD != "/work/parked" {
+		t.Fatalf("idle rows = %+v, want only the live parked thread", report.Idle)
+	}
+	if report.Usage.Total() != 500 {
+		t.Fatalf("total = %d, want 500 — idle threads must not add spend", report.Usage.Total())
+	}
+}
+
+// --top exists to keep the report readable on a busy day, so it has to cut the
+// cheap tail. Truncating before ranking would drop exactly the threads worth
+// seeing, which is the failure the report exists to prevent.
+func TestTopKeepsTheBiggestSpenders(t *testing.T) {
+	home := t.TempDir()
+	rollout(t, home, "llll", "/work/small", "2026-09-09T09:00:00Z",
+		call("2026-09-09T10:00:00Z", 100, 100, 0, "pro", 10, 1789437323))
+	rollout(t, home, "mmmm", "/work/huge", "2026-09-09T09:10:00Z",
+		call("2026-09-09T10:10:00Z", 9000, 9000, 0, "pro", 20, 1789437323))
+	rollout(t, home, "nnnn", "/work/middle", "2026-09-09T09:20:00Z",
+		call("2026-09-09T10:20:00Z", 3000, 3000, 0, "pro", 24, 1789437323))
+
+	report, err := Run(context.Background(), env(t, home, nil), Options{Since: since(t, "2026-09-09T00:00:00Z"), Top: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Sessions) != 2 {
+		t.Fatalf("rows = %d, want 2", len(report.Sessions))
+	}
+	if report.Sessions[0].CWD != "/work/huge" || report.Sessions[1].CWD != "/work/middle" {
+		t.Fatalf("rows = %q, %q; want the two biggest, ranked", report.Sessions[0].CWD, report.Sessions[1].CWD)
+	}
+	// The headline still accounts for every thread, including the cut tail.
+	if report.Usage.Total() != 12100 || report.Calls != 3 {
+		t.Fatalf("totals = %d tokens / %d calls, want 12100/3 — truncation must not lose spend", report.Usage.Total(), report.Calls)
+	}
+}
