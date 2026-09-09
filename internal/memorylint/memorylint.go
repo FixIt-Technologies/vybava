@@ -155,6 +155,79 @@ func Discover(start string) ([]string, error) {
 	return roots, nil
 }
 
+// lintScope maps a requested path onto the home that must be walked and the
+// prefix findings are kept under. A whole home lints unscoped; a handoff
+// project directory or a single note lints its home and keeps only its own
+// findings, so one project never fails on another project's debt.
+func lintScope(absolute string, isDir bool) (root, scope string) {
+	if home := handoffsHome(absolute); home != "" {
+		if home == absolute {
+			return home, ""
+		}
+		return home, absolute
+	}
+	if isDir {
+		return absolute, ""
+	}
+	return memoryHome(absolute), absolute
+}
+
+// memoryHome returns the nearest ancestor of a note that carries a MEMORY.md,
+// so a nested note is linted against its whole home (index, siblings, links);
+// without one, the note's own directory.
+func memoryHome(note string) string {
+	dir := filepath.Dir(note)
+	for cur := dir; ; cur = filepath.Dir(cur) {
+		if _, err := os.Stat(filepath.Join(cur, "MEMORY.md")); err == nil {
+			return cur
+		}
+		if filepath.Dir(cur) == cur {
+			return dir
+		}
+	}
+}
+
+// handoffsHome returns the `.claude/handoffs` directory a path sits in or
+// under, or "" when the path is not inside one.
+func handoffsHome(path string) string {
+	if !IsHandoffHome(path) {
+		return ""
+	}
+	for cur := path; ; cur = filepath.Dir(cur) {
+		if filepath.Base(cur) == "handoffs" && filepath.Base(filepath.Dir(cur)) == ".claude" {
+			return cur
+		}
+		if filepath.Dir(cur) == cur {
+			return ""
+		}
+	}
+}
+
+func underScope(findings []Finding, scope string) []Finding {
+	prefix := scope + string(filepath.Separator)
+	var kept []Finding
+	for _, f := range findings {
+		if f.Path == scope || strings.HasPrefix(f.Path, prefix) {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
+func countMarkdown(scope string) (int, error) {
+	files := 0
+	err := filepath.WalkDir(scope, func(path string, item os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !item.IsDir() && strings.EqualFold(filepath.Ext(path), ".md") {
+			files++
+		}
+		return nil
+	})
+	return files, err
+}
+
 func Lint(paths []string) (Report, error) {
 	if len(paths) == 0 {
 		discovered, err := Discover("")
@@ -174,20 +247,24 @@ func Lint(paths []string) (Report, error) {
 		if err != nil {
 			return Report{}, fmt.Errorf("inspect %s: %w", absolute, err)
 		}
-		if !info.IsDir() {
-			return Report{}, fmt.Errorf("memory root is not a directory: %s", absolute)
-		}
-		config, err := loadConfig(absolute)
+		root, scope := lintScope(absolute, info.IsDir())
+		config, err := loadConfig(root)
 		if err != nil {
 			return Report{}, err
 		}
 		lint := lintRoot
-		if IsHandoffHome(absolute) {
+		if IsHandoffHome(root) {
 			lint = lintHandoffRoot
 		}
-		findings, files, err := lint(absolute, config)
+		findings, files, err := lint(root, config)
 		if err != nil {
 			return Report{}, err
+		}
+		if scope != "" {
+			findings = underScope(findings, scope)
+			if files, err = countMarkdown(scope); err != nil {
+				return Report{}, err
+			}
 		}
 		report.Roots = append(report.Roots, absolute)
 		report.Files += files

@@ -167,3 +167,27 @@ func TestHookTargetsHandoffs(t *testing.T) {
 func sprintf(format string, args ...any) string {
 	return strings.TrimSpace(fmtSprintf(format, args...)) + "\n"
 }
+
+func TestHandoffCheckScopesToProjectOrFile(t *testing.T) {
+	t.Parallel()
+	home := handoffHome(t)
+	writeDeep(t, filepath.Join(home, "cpi", "clean.md"), sprintf(goodHandoff, "clean", "open"))
+	writeDeep(t, filepath.Join(home, "cpi", "misplaced.md"), sprintf(goodHandoff, "misplaced", "done"))
+	writeDeep(t, filepath.Join(home, "other", "broken.md"), "# Handoff: broken\n\nno frontmatter\n")
+
+	report, err := memorylint.Lint([]string{filepath.Join(home, "cpi")})
+	if err != nil {
+		t.Fatalf("Lint(project) error = %v", err)
+	}
+	if got := rules(report); got["H002"] != 1 || got["H001"] != 0 || report.Files != 2 {
+		t.Errorf("Lint(project) = files %d, rules %v; want only cpi's H002 over 2 files: %#v", report.Files, got, report.Findings)
+	}
+
+	report, err = memorylint.Lint([]string{filepath.Join(home, "cpi", "clean.md")})
+	if err != nil {
+		t.Fatalf("Lint(file) error = %v", err)
+	}
+	if len(report.Findings) != 0 || report.Files != 1 {
+		t.Errorf("Lint(file) = files %d, findings %#v; want a clean single file", report.Files, report.Findings)
+	}
+}

@@ -23,6 +23,7 @@ how notes age:
 
 ```sh
 memorylint check <home>                 # the rules above
+memorylint check <home>/<project> | <note.md>  # same rules, findings scoped to that project or note
 memorylint fix [--dry-run] <home>       # normalize notes onto the flat v2 schema
 memorylint new --home <home> --type project --name project-topic --description "Use when …"
 memorylint new --provisional …          # status: provisional + expires 60 days out
