@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/FixIt-Technologies/vybava/internal/press"
+	"github.com/henderson-tech/vybava/internal/press"
 	"github.com/spf13/cobra"
 )
 

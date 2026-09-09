@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FixIt-Technologies/vybava/internal/memorylint"
+	"github.com/henderson-tech/vybava/internal/memorylint"
 )
 
 const goodHandoff = `---

@@ -54,24 +54,24 @@ homebrew_casks:
       - vybava
     binaries:
       - vybava
-    homepage: https://github.com/FixIt-Technologies/vybava
+    homepage: https://github.com/henderson-tech/vybava
     description: Portable engineering tools, agent skills, and diagnostics for every project
     license: MIT
     directory: Casks
     commit_msg_template: "chore(cask): update vybava to {{ .Tag }}"
     repository:
-      owner: FixIt-Technologies
+      owner: henderson-tech
       name: homebrew-tap
       branch: main
       git:
-        url: git@github.com:FixIt-Technologies/homebrew-tap.git
+        url: git@github.com:henderson-tech/homebrew-tap.git
         private_key: "{{ .Env.TAP_DEPLOY_KEY }}"
     commit_author:
       name: vybava-release
       email: engineering@fixit.technology
     url:
-      template: https://github.com/FixIt-Technologies/vybava/releases/download/{{ .Tag }}/{{ .ArtifactName }}
-      verified: github.com/FixIt-Technologies/vybava/
+      template: https://github.com/henderson-tech/vybava/releases/download/{{ .Tag }}/{{ .ArtifactName }}
+      verified: github.com/henderson-tech/vybava/
     hooks:
       post:
         install: |

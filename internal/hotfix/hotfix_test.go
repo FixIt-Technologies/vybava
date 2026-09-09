@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/runx"
+	"github.com/henderson-tech/vybava/internal/runx"
 )
 
 // stubRunner runs git for real against temp repositories and scripts gh.

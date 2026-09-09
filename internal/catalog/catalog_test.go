@@ -3,8 +3,8 @@ package catalog_test
 import (
 	"testing"
 
-	assets "github.com/FixIt-Technologies/vybava"
-	"github.com/FixIt-Technologies/vybava/internal/catalog"
+	assets "github.com/henderson-tech/vybava"
+	"github.com/henderson-tech/vybava/internal/catalog"
 )
 
 func TestEmbeddedCatalogIsValid(t *testing.T) {

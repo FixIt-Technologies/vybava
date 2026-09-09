@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/catalog"
-	statepkg "github.com/FixIt-Technologies/vybava/internal/state"
+	"github.com/henderson-tech/vybava/internal/catalog"
+	statepkg "github.com/henderson-tech/vybava/internal/state"
 )
 
 type Agent string

@@ -1,6 +1,6 @@
 package hotfix
 
-import "github.com/FixIt-Technologies/vybava/internal/runx"
+import "github.com/henderson-tech/vybava/internal/runx"
 
 // The CLOSED diagnostic-code enum for the hotfix applet. Adding a code means
 // a doc comment here stating when it fires and what the fix is.

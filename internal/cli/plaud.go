@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/plaud"
+	"github.com/henderson-tech/vybava/internal/plaud"
 	"github.com/spf13/cobra"
 )
 

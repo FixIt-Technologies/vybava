@@ -3,8 +3,8 @@ package cli
 import (
 	"os"
 
-	"github.com/FixIt-Technologies/vybava/internal/hotfix"
-	"github.com/FixIt-Technologies/vybava/internal/runx"
+	"github.com/henderson-tech/vybava/internal/hotfix"
+	"github.com/henderson-tech/vybava/internal/runx"
 	"github.com/spf13/cobra"
 )
 

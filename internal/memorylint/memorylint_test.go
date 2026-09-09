@@ -8,7 +8,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/FixIt-Technologies/vybava/internal/memorylint"
+	"github.com/henderson-tech/vybava/internal/memorylint"
 )
 
 func TestLintFindsBrokenLinksLegacyFrontmatterAndFixtures(t *testing.T) {

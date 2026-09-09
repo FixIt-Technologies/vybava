@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/operator"
+	"github.com/henderson-tech/vybava/internal/operator"
 	"github.com/spf13/cobra"
 )
 
