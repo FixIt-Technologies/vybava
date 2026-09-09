@@ -154,6 +154,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - envbridge
       - codexsync
       - hotfix
       - hotfix-lane
@@ -194,6 +195,7 @@ groups:
   - id: everything
     description: Every package currently published by Výbava.
     items:
+      - envbridge
       - memorylint
       - fontfreeze
       - perfrig
