@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/runx"
+	"github.com/henderson-tech/vybava/internal/runx"
 )
 
 // Result is what every verb hands the CLI: the payload plus the diagnostics

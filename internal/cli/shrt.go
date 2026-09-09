@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/shrt"
+	"github.com/henderson-tech/vybava/internal/shrt"
 	"github.com/spf13/cobra"
 )
 

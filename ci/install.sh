@@ -6,7 +6,7 @@
 # and optionally links the requested applets / installs the requested skills.
 #
 #   curl -fsSL -o /tmp/vybava-install.sh \
-#     https://raw.githubusercontent.com/FixIt-Technologies/vybava/v0.3.3/ci/install.sh \
+#     https://raw.githubusercontent.com/henderson-tech/vybava/v0.3.3/ci/install.sh \
 #   && bash /tmp/vybava-install.sh --version 0.3.3 --bin-dir /usr/local/bin --install memorylint,hotfix
 #
 # Download, THEN run — never `curl … | bash`: without pipefail a 404 hands bash
@@ -21,7 +21,7 @@
 #                         skill target for items that are skills (default all)
 #   --from-dir <dir>      take <archive> + checksums.txt from a local directory
 #                         instead of GitHub (offline installs, the test suite)
-#   --repo <owner/name>   release source (default FixIt-Technologies/vybava)
+#   --repo <owner/name>   release source (default henderson-tech/vybava)
 set -euo pipefail
 
 version=""
@@ -29,7 +29,7 @@ bin_dir="/usr/local/bin"
 items=""
 agent="all"
 from_dir=""
-repo="FixIt-Technologies/vybava"
+repo="henderson-tech/vybava"
 
 die() { printf 'vybava ci/install.sh: %s\n' "$*" >&2; exit 1; }
 

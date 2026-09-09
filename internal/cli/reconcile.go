@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/reconcile"
+	"github.com/henderson-tech/vybava/internal/reconcile"
 	"github.com/spf13/cobra"
 )
 

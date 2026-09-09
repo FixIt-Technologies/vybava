@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/FixIt-Technologies/vybava/internal/operator"
+	"github.com/henderson-tech/vybava/internal/operator"
 )
 
 func TestIndexedOperatorCLIHistoryAndOutcome(t *testing.T) {

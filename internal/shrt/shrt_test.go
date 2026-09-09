@@ -13,18 +13,18 @@ func TestStaticRoundTrip(t *testing.T) {
 	cases := []struct {
 		long, short string
 	}{
-		{"https://github.com/FixIt-Technologies/FixIt/pull/1088", "gh/fixit/1088"},
-		{"https://github.com/FixIt-Technologies/FixIt/issues/42", "gh/fixit/42"},
-		{"https://github.com/FixIt-Technologies/vitrinka/pull/250#issuecomment-1", "gh/vitrinka/250"},
+		{"https://github.com/henderson-tech/FixIt/pull/1088", "gh/fixit/1088"},
+		{"https://github.com/henderson-tech/FixIt/issues/42", "gh/fixit/42"},
+		{"https://github.com/henderson-tech/vitrinka/pull/250#issuecomment-1", "gh/vitrinka/250"},
 		{"https://github.com/Reservine/reservine", "gh/reservine"},
 		{"https://github.com/Reservine/ReservineBack/pull/645", "gh/resback/645"},
 		{"https://github.com/genesiscz/ReservineBack/pull/645", "gh/resback/645"},
 		{"https://vitrinka.ai/b/581", "b/581"},
 		{"https://app.vitrinka.ai/b/581", "b/581"},
-		{"https://github.com/FixIt-Technologies/vitrinka-kit/pull/13", "gh/kit/13"},
+		{"https://github.com/henderson-tech/vitrinka-kit/pull/13", "gh/kit/13"},
 		// The generic catch-all: anything github.com serves keeps the full
 		// path under the compact gh/ prefix, query riding along.
-		{"https://github.com/FixIt-Technologies/vitrinka/actions/runs/33399524360", "gh/FixIt-Technologies/vitrinka/actions/runs/33399524360"},
+		{"https://github.com/henderson-tech/vitrinka/actions/runs/33399524360", "gh/henderson-tech/vitrinka/actions/runs/33399524360"},
 		{"https://github.com/torvalds/linux/tree/master/kernel", "gh/torvalds/linux/tree/master/kernel"},
 		{"https://github.com/search?q=shrt&type=code", "gh/search?q=shrt&type=code"},
 	}
@@ -102,7 +102,7 @@ func TestServerStaticRedirect(t *testing.T) {
 	if resp.StatusCode != http.StatusFound {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
-	if loc := resp.Header.Get("Location"); loc != "https://github.com/FixIt-Technologies/FixIt/pull/1088" {
+	if loc := resp.Header.Get("Location"); loc != "https://github.com/henderson-tech/FixIt/pull/1088" {
 		t.Fatalf("location %q", loc)
 	}
 }
@@ -165,7 +165,7 @@ func TestServerMintAuth(t *testing.T) {
 func TestServerMintStaticURLReturnsStaticForm(t *testing.T) {
 	_, ts := newTestServer(t)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/mint",
-		strings.NewReader(`{"url":"https://github.com/FixIt-Technologies/FixIt/pull/7"}`))
+		strings.NewReader(`{"url":"https://github.com/henderson-tech/FixIt/pull/7"}`))
 	req.Header.Set("Authorization", "Bearer sekrit")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestStorePersistsAcrossReopen(t *testing.T) {
 
 func TestClientStaticOffline(t *testing.T) {
 	client := Client{} // no token, no network needed
-	result, err := client.Shorten("https://github.com/FixIt-Technologies/FixIt/pull/1088")
+	result, err := client.Shorten("https://github.com/henderson-tech/FixIt/pull/1088")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/FixIt-Technologies/vybava/internal/cli"
+	"github.com/henderson-tech/vybava/internal/cli"
 )
 
 var version = "dev"

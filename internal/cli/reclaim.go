@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/reclaim"
+	"github.com/henderson-tech/vybava/internal/reclaim"
 	"github.com/spf13/cobra"
 )
 

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/handoffs"
+	"github.com/henderson-tech/vybava/internal/handoffs"
 	"github.com/spf13/cobra"
 )
 

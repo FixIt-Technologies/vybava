@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/FixIt-Technologies/vybava/internal/runx"
+	"github.com/henderson-tech/vybava/internal/runx"
 )
 
 func runHotfix(t *testing.T, dir string, args ...string) (runx.Envelope, error) {

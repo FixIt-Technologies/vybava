@@ -18,18 +18,18 @@ const DefaultBase = "https://luko.to"
 // repo is one line; an unknown gh/ segment expands verbatim onto github.com
 // (the generic catch-all below), so a typo'd alias lands on GitHub's 404.
 var repoAliases = map[string]string{
-	"fixit":     "FixIt-Technologies/FixIt",
-	"vitrinka":  "FixIt-Technologies/vitrinka",
-	"vybava":    "FixIt-Technologies/vybava",
-	"eve":       "FixIt-Technologies/eve-ai-layer",
-	"devinfra":  "FixIt-Technologies/devulinka-infra",
-	"prodinfra": "FixIt-Technologies/produlinka-infra",
-	"webinfra":  "FixIt-Technologies/webulinka-infra",
+	"fixit":     "henderson-tech/FixIt",
+	"vitrinka":  "henderson-tech/vitrinka",
+	"vybava":    "henderson-tech/vybava",
+	"eve":       "henderson-tech/eve-ai-layer",
+	"devinfra":  "henderson-tech/devulinka-infra",
+	"prodinfra": "henderson-tech/produlinka-infra",
+	"webinfra":  "henderson-tech/webulinka-infra",
 	"reservine": "Reservine/reservine",
 	"resback":   "Reservine/ReservineBack",
 	"exports":   "LEFTEQ/Exports",
 	"claudik":   "LEFTEQ/Claudik",
-	"kit":       "FixIt-Technologies/vitrinka-kit",
+	"kit":       "henderson-tech/vitrinka-kit",
 }
 
 // aliasByRepo is the inverted table, built once at init.

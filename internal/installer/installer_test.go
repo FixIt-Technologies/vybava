@@ -6,9 +6,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/FixIt-Technologies/vybava/internal/catalog"
-	"github.com/FixIt-Technologies/vybava/internal/installer"
-	"github.com/FixIt-Technologies/vybava/internal/state"
+	"github.com/henderson-tech/vybava/internal/catalog"
+	"github.com/henderson-tech/vybava/internal/installer"
+	"github.com/henderson-tech/vybava/internal/state"
 )
 
 func TestPlanExpandsAllAgentTargets(t *testing.T) {

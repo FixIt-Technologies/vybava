@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/cli"
+	"github.com/henderson-tech/vybava/internal/cli"
 )
 
 type fixture struct {

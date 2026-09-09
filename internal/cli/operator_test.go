@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/FixIt-Technologies/vybava/internal/operator"
+	"github.com/henderson-tech/vybava/internal/operator"
 )
 
 func TestOperatorObserveProposeScoreJourney(t *testing.T) {

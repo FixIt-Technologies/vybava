@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/FixIt-Technologies/vybava/internal/catalog"
+	"github.com/henderson-tech/vybava/internal/catalog"
 )
 
 type browserModel struct {

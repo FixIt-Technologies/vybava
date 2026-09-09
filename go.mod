@@ -1,4 +1,4 @@
-module github.com/FixIt-Technologies/vybava
+module github.com/henderson-tech/vybava
 
 go 1.26
 

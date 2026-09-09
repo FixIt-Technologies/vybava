@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/FixIt-Technologies/vybava/internal/catalog"
-	"github.com/FixIt-Technologies/vybava/internal/state"
+	"github.com/henderson-tech/vybava/internal/catalog"
+	"github.com/henderson-tech/vybava/internal/state"
 )
 
 type Status string
