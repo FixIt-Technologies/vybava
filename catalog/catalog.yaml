@@ -1,6 +1,12 @@
 schema_version: 1
 
 items:
+  - id: envbridge
+    kind: applet
+    status: experimental
+    description: Transfer named environment values through a private, expiring Unix socket without secret-bearing files; read output stays inside the consuming process.
+    applet: envbridge
+
   - id: operator
     kind: applet
     status: experimental

@@ -72,3 +72,8 @@ conservative, freshness-gated Claude attention selection; the CLI only wires it.
 `internal/plaud` reads the Plaud account directly (PKCE login, vault-injected
 refresh token, cached access token only); the manual-only skill is
 `skills/plaud/`. `docs/plaud.md` has the auth model and the API map.
+
+`internal/envbridge` provides bounded, memory-only environment transfer over a
+private Unix socket. It never fetches vault values or executes shell exports;
+the injecting wrapper and consuming process own those boundaries. See
+`docs/envbridge.md` before using its sensitive read output.
