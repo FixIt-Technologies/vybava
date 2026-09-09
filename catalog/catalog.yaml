@@ -1,6 +1,12 @@
 schema_version: 1
 
 items:
+  - id: envbridge
+    kind: applet
+    status: experimental
+    description: Transfer named environment values through a private, expiring Unix socket without secret-bearing files; read output stays inside the consuming process.
+    applet: envbridge
+
   - id: operator
     kind: applet
     status: experimental
@@ -148,6 +154,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - envbridge
       - codexsync
       - hotfix
       - hotfix-lane
@@ -188,6 +195,7 @@ groups:
   - id: everything
     description: Every package currently published by Výbava.
     items:
+      - envbridge
       - memorylint
       - fontfreeze
       - perfrig

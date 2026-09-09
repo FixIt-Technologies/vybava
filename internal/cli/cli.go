@@ -109,6 +109,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "plaud" {
 		return rt.plaudApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "envbridge" {
+		return rt.envbridgeApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -139,6 +142,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.handoffsCommand("handoffs"),
 		rt.operatorCommand("operator"),
 		rt.plaudCommand("plaud"),
+		rt.envbridgeCommand(),
 		rt.browseCommand(),
 	)
 	return root, nil
