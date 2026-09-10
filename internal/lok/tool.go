@@ -490,7 +490,7 @@ func (t *Tool) Check(catalogID string) ([]Problem, error) {
 					problems = append(problems, Problem{Catalog: id, Kind: "missing", Key: k, Locale: code, Detail: "required locale has no value"})
 				}
 			}
-			if _, plural := c.Config.BaseKey(k); c.Config.Style == StyleEnglishAsKey && !plural {
+			if _, plural := c.Config.BaseKey(k); c.Config.Style == StyleEnglishAsKey && !plural && !c.Config.Exempted(k) {
 				if v, ok := c.Lookup("en", k); ok && v != k {
 					problems = append(problems, Problem{Catalog: id, Kind: "english-as-key", Key: k, Locale: "en", Detail: fmt.Sprintf("en value %q must equal the key", v)})
 				}

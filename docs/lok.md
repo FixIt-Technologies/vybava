@@ -19,7 +19,7 @@ path             nested JSON addressed by dotted path (meta.title)
 
 Each catalog names its `files` pattern (`{locale}`), its `locales`, the
 `required` subset every key must carry (others are tracked, never silently
-missing), optional `plurals` suffixes, an `afterWrite` command (a type
+missing), optional `plurals` suffixes, `exempt` regexes for structured keys whose en value is prose (`_help$`), an `afterWrite` command (a type
 generator, a formatter) and, for english-as-key catalogs, a `scan` block.
 
 ```text

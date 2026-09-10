@@ -148,3 +148,54 @@ func TestPlaceholderCheck(t *testing.T) {
 		t.Fatalf("placeholder mismatch must be flagged: %+v", problems)
 	}
 }
+
+func TestArraysAndScalarsRoundTrip(t *testing.T) {
+	src := "{\n  \"hero\": {\n    \"chips\": [\n      \"No fees\",\n      {\n        \"label\": \"Live\",\n        \"count\": 4,\n        \"on\": true,\n        \"none\": null\n      }\n    ]\n  }\n}\n"
+	obj, err := ParseObject([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(obj.Marshal()); got != src {
+		t.Fatalf("round trip differs:\n%s", got)
+	}
+	leaves := obj.Leaves()
+	if len(leaves) != 2 || leaves[1].Key != "hero.chips.1.label" {
+		t.Fatalf("leaves: %+v", leaves)
+	}
+	c := &Catalog{Config: CatalogConfig{Style: StylePath, Locales: []string{"en"}}, Locales: map[string]*Locale{"en": {Code: "en", Object: obj, Exists: true}}}
+	if v, ok := c.Lookup("en", "hero.chips.1.label"); !ok || v != "Live" {
+		t.Fatalf("array lookup: %q %v", v, ok)
+	}
+	if err := c.Put("en", "hero.chips.2", "Third"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Put("en", "hero.chips.9", "gap"); err == nil {
+		t.Fatal("index past end must fail")
+	}
+	if !c.Remove("en", "hero.chips.0") {
+		t.Fatal("array element remove")
+	}
+	if v, _ := c.Lookup("en", "hero.chips.1"); v != "Third" {
+		t.Fatalf("after remove: %q", v)
+	}
+}
+
+func TestExemptKeys(t *testing.T) {
+	tool := fixture(t)
+	tool.Config.Catalogs["mobile"] = withExempt(tool.Config.Catalogs["mobile"], "_help$")
+	c, _ := LoadCatalog(tool.Root, "mobile", tool.Config.Catalogs["mobile"])
+	_ = c.Put("en", "Join_help", "if you're an employee.")
+	_ = c.Put("cs", "Join_help", "pokud jste zaměstnanec.")
+	if _, err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if problems, _ := tool.Check("mobile"); len(problems) != 0 {
+		t.Fatalf("exempt key must not be flagged: %+v", problems)
+	}
+	tool.Config.Catalogs["mobile"] = withExempt(tool.Config.Catalogs["mobile"])
+	if problems, _ := tool.Check("mobile"); len(problems) != 1 || problems[0].Kind != "english-as-key" {
+		t.Fatalf("without exempt it must be flagged: %+v", problems)
+	}
+}
+
+func withExempt(c CatalogConfig, e ...string) CatalogConfig { c.Exempt = e; return c }

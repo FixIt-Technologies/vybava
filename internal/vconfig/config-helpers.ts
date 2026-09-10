@@ -29,6 +29,8 @@ export interface CatalogConfig {
   plurals?: string[];
   /** Shell command run after any write, from the repo root (e.g. a type generator). */
   afterWrite?: string;
+  /** Regexes for keys excused from the english-as-key invariant (structured keys like `_help$` whose en value is prose). */
+  exempt?: string[];
   /** Source scan for english-as-key catalogs. */
   scan?: ScanConfig;
 }

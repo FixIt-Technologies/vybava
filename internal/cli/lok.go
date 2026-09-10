@@ -212,6 +212,9 @@ func (rt *runtime) lokCommand(use string) *cobra.Command {
 			if err == nil && len(problems) > 0 {
 				err = &lok.Diag{Code: lok.DiagCheckFailed, Detail: fmt.Sprintf("%d problem(s); first: %s %q [%s] %s", len(problems), problems[0].Kind, problems[0].Key, problems[0].Locale, problems[0].Detail), Fix: "lok missing --json"}
 			}
+			if problems == nil {
+				problems = []lok.Problem{}
+			}
 			return finish(s, map[string]any{"problems": problems}, nil, err)
 		},
 	})
