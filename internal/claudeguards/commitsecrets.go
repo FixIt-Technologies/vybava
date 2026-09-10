@@ -53,7 +53,7 @@ var (
 
 func guardCommitSecrets(in *HookInput) *Denial {
 	cmd := in.ToolInput.Command
-	if !strings.Contains(cmd, "git commit") || strings.Contains(cmd, "COMMIT_GUARD_ALLOW=1") {
+	if !strings.Contains(cmd, "git commit") || escapeHatch(cmd, "COMMIT_GUARD_ALLOW") {
 		return nil
 	}
 

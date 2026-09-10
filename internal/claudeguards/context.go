@@ -335,8 +335,8 @@ func contextBashMatch(cmd, cwd string) *Denial {
 	if cmd == "" {
 		return nil
 	}
-	allowWrite := strings.Contains(cmd, "CLAUDE_ALLOW_SHELL_EDIT=1")
-	allowRead := strings.Contains(cmd, "CLAUDE_ALLOW_CONTEXT_DUMP=1")
+	allowWrite := escapeHatch(cmd, "CLAUDE_ALLOW_SHELL_EDIT")
+	allowRead := escapeHatch(cmd, "CLAUDE_ALLOW_CONTEXT_DUMP")
 
 	if !allowWrite && reInlineScript.MatchString(cmd) && reScriptWrites.MatchString(cmd) {
 		return deny("context:inline-script-write", inlineScriptMsg, contextWriteEscape)

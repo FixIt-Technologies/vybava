@@ -194,7 +194,7 @@ build cache, all of which are reproducible. Volumes are not.`,
 
 // destructiveMatch returns the first matching rule, or nil. Pure — unit-testable.
 func destructiveMatch(cmd, cwd string) *destructiveRule {
-	if cmd == "" || strings.Contains(cmd, "CLAUDE_ALLOW_DANGEROUS=1") {
+	if cmd == "" || escapeHatch(cmd, "CLAUDE_ALLOW_DANGEROUS") {
 		return nil
 	}
 	// Fast path: none of the rule keywords appear anywhere in the command →
