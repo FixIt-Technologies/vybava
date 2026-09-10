@@ -272,6 +272,9 @@ func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool
 		if isTranscript(abs) {
 			return abs, 0, 0, true
 		}
+		if isLokCatalog(abs, cwd) {
+			return abs, -1, 0, false
+		}
 		n, ok := lineCount(abs)
 		if !ok {
 			continue
@@ -359,6 +362,9 @@ func contextBashMatch(cmd, cwd string) *Denial {
 		if transcript {
 			return deny("context:transcript-dump", fmt.Sprintf(transcriptMsg, file), contextReadEscape)
 		}
+		if lines == -1 {
+			return catalogDenial(file)
+		}
 		if file != "" {
 			return deny("context:whole-file-dump", fmt.Sprintf(wholeFileMsg, total, maxDumpLines, file, lines), contextReadEscape)
 		}
@@ -386,6 +392,9 @@ func contextReadMatch(path string, limit int, cwd string) *Denial {
 	abs := resolvePath(path, cwd)
 	if isTranscript(abs) {
 		return deny("context:transcript-dump", fmt.Sprintf(transcriptMsg, abs), "")
+	}
+	if isLokCatalog(abs, cwd) {
+		return catalogDenial(abs)
 	}
 	if limit > 0 || noLineBudget[strings.ToLower(filepath.Ext(abs))] {
 		return nil
