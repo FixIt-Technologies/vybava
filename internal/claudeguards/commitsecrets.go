@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -178,7 +177,7 @@ func refreshVisibilityDetached(dir, cache string) {
 	c := exec.Command(self, "refresh-visibility", dir, cache)
 	c.Args[0] = "claude-guards" // multicall dispatch is on argv[0]
 	c.Stdout, c.Stderr, c.Stdin = nil, nil, nil
-	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	c.SysProcAttr = detachedAttr()
 	if c.Start() == nil {
 		_ = c.Process.Release()
 	}

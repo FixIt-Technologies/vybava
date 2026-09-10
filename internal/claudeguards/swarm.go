@@ -23,7 +23,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -63,14 +62,6 @@ func selectSwarms(socketNames []string, alive func(int) bool, ancestors map[int]
 		}
 	}
 	return out
-}
-
-// pidAlive reports whether a process exists. kill(pid, 0) succeeds for live
-// processes we own and fails with EPERM for live ones we don't; only ESRCH
-// means gone.
-func pidAlive(pid int) bool {
-	err := syscall.Kill(pid, 0)
-	return err == nil || err == syscall.EPERM
 }
 
 // ancestorPIDs walks up from our parent a bounded number of hops. The hook is
@@ -128,13 +119,13 @@ func teardownSwarm(socketPath string) {
 			}
 		}
 		for _, v := range victims {
-			_ = syscall.Kill(v, syscall.SIGTERM)
+			terminate(v)
 		}
 		if len(victims) > 0 {
 			time.Sleep(2 * time.Second)
 			for _, v := range victims {
 				if pidAlive(v) {
-					_ = syscall.Kill(v, syscall.SIGKILL)
+					kill(v)
 				}
 			}
 		}
