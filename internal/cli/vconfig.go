@@ -62,9 +62,8 @@ func (rt *runtime) configCommand() *cobra.Command {
 			root := workingDir()
 			cfgPath := filepath.Join(root, vconfig.FileTS)
 			wrote := []string{}
-			if _, err := os.Stat(cfgPath); err == nil && !force {
-				// Existing config: only refresh helpers.
-			} else {
+			// An existing config is the repo's; --force only refreshes the generated helpers.
+			if _, err := os.Stat(cfgPath); err != nil {
 				if err := os.WriteFile(cfgPath, []byte(vconfig.StarterConfig), 0o644); err != nil {
 					return finish(s, nil, nil, runx.DiagInfraError, err.Error(), "")
 				}
@@ -83,7 +82,7 @@ func (rt *runtime) configCommand() *cobra.Command {
 			return finish(s, map[string]any{"written": wrote}, []string{"vybava config check --json"}, "", "", "")
 		},
 	}
-	initCmd.Flags().BoolVar(&force, "force", false, "overwrite vybava.config.ts and the helpers")
+	initCmd.Flags().BoolVar(&force, "force", false, "rewrite the generated .vybava/config.ts helpers (never the config itself)")
 	root.AddCommand(initCmd)
 
 	root.AddCommand(&cobra.Command{
