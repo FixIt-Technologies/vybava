@@ -149,7 +149,7 @@ func envDumpSegment(seg string) bool {
 
 // envDumpMatch returns the matched rule name, or "". Pure — unit-testable.
 func envDumpMatch(cmd string) string {
-	if cmd == "" || strings.Contains(cmd, "CLAUDE_ALLOW_DANGEROUS=1") {
+	if cmd == "" || escapeHatch(cmd, "CLAUDE_ALLOW_DANGEROUS") {
 		return ""
 	}
 	// Fast path: no dump-shaped keyword anywhere → zero regex/token work.
