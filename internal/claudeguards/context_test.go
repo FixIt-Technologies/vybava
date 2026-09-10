@@ -134,3 +134,32 @@ func TestDenialText(t *testing.T) {
 		t.Fatalf("unexpected text %q", d.Text())
 	}
 }
+
+func TestLokCatalogRule(t *testing.T) {
+	root, _, _, _ := fixture(t)
+	cat := filepath.Join(root, "locales", "cs.json")
+	if err := os.MkdirAll(filepath.Dir(cat), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cat, []byte("{\n  \"a\": \"b\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vybava.config.json"), []byte(`{"lok":{"catalogs":{"m":{"style":"english-as-key","files":"locales/{locale}.json","locales":["cs"]}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if d := contextBashMatch("cat "+cat, root); d == nil || d.Rule != "context:locale-catalog" {
+		t.Fatalf("cat of a 3-line catalog must still block, got %v", d)
+	}
+	if d := contextBashMatch("sed -n '1,2p' "+cat, root); d == nil || d.Rule != "context:locale-catalog" {
+		t.Fatalf("ranged read must block, got %v", d)
+	}
+	if d := contextReadMatch(cat, 50, root); d == nil || d.Rule != "context:locale-catalog" {
+		t.Fatalf("Read with limit must block, got %v", d)
+	}
+	if d := contextBashMatch("cat "+cat+" | jq keys", root); d != nil {
+		t.Fatalf("piped read stays allowed, got %v", d)
+	}
+	if d := contextBashMatch("CLAUDE_ALLOW_CONTEXT_DUMP=1 cat "+cat, root); d != nil {
+		t.Fatalf("escape hatch, got %v", d)
+	}
+}

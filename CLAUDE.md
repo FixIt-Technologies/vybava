@@ -81,6 +81,8 @@ double-billing. `rollout.go` owns parsing and the mtime prefilter; `live.go` own
 refresh token, cached access token only); the manual-only skill is
 `skills/plaud/`. `docs/plaud.md` has the auth model and the API map.
 
+`internal/vconfig` loads the shared per-repo `vybava.config.ts` (bun-evaluated, cached by mtime beside the git dir) or `vybava.config.json`; applets read their section through `Config.Section` with unknown fields rejected. The TypeScript helpers are embedded (`config-helpers.ts`) and drift-checked by `vybava config check`. `internal/lok` owns locale catalogs (order-preserving JSON, alphabetical inserts, per-locale parity); `internal/claudeguards` refuses raw reads of configured catalogs. Docs: `docs/config.md`, `docs/lok.md`.
+
 `internal/envbridge` provides bounded, memory-only environment transfer over a
 private Unix socket. It never fetches vault values or executes shell exports;
 the injecting wrapper and consuming process own those boundaries. See

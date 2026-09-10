@@ -7,6 +7,12 @@ items:
     description: PreToolUse guard hooks for Claude Code — block destructive git/docker calls, secret and environment dumps, host-input automation, commit-time secrets, and the context-budget sinks (shell-rewritten files, whole-file dumps, transcript reads); every block names the sanctioned alternative.
     applet: claude-guards
 
+  - id: lok
+    kind: applet
+    status: experimental
+    description: Locale catalogs for AI sessions — never read whole. Configured in vybava.config.ts (lok.catalogs), queried by key (get, grep, missing), written by verb with every locale kept in sync (add, set, rm), extracted from source (scan), gated in CI (check).
+    applet: lok
+
   - id: envbridge
     kind: applet
     status: experimental
@@ -166,6 +172,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - lok
       - claude-guards
       - envbridge
       - codexsync
@@ -209,6 +216,7 @@ groups:
   - id: everything
     description: Every package currently published by Výbava.
     items:
+      - lok
       - claude-guards
       - envbridge
       - memorylint

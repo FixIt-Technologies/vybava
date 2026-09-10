@@ -1,0 +1,51 @@
+# lok
+
+lok owns locale catalogs the way an AI session should touch them: never
+whole. A 5 000-key `cs.json` is ~100k tokens of strings a session will not
+use; reading it to add one key, or rewriting it through the shell, is the
+single largest avoidable context sink in a localized app. lok makes the
+catalog a store — queried by key, written by verb, every locale kept in
+sync by construction — and `claude-guards` refuses raw reads of any file
+the config declares as a catalog.
+
+Configuration lives in the `lok` section of `vybava.config.ts`
+([docs/config.md](config.md)). Two key styles:
+
+```text
+english-as-key   flat JSON, the key IS the English source text (t('Save'));
+                 an `en` file, when present, maps key → key and is derived
+path             nested JSON addressed by dotted path (meta.title)
+```
+
+Each catalog names its `files` pattern (`{locale}`), its `locales`, the
+`required` subset every key must carry (others are tracked, never silently
+missing), optional `plurals` suffixes, `exempt` regexes for structured keys whose en value is prose (`_help$`), an `afterWrite` command (a type
+generator, a formatter) and, for english-as-key catalogs, a `scan` block.
+
+```text
+lok catalogs --json                       # every catalog, key counts, gaps per locale
+lok get 'Save' --json                     # one key across locales (plural variants included)
+lok grep 'inquir' --limit 20 --json       # regex over keys+values, always capped
+lok missing --json                        # required-locale gaps; --all for every locale
+lok check --json                          # parity + english-as-key + {{placeholder}} invariants — CI gate
+
+lok add 'Cancel' --tr cs='Zrušit' --json  # inserts at the alphabetical slot in EVERY locale
+lok set 'Cancel' --tr cs='Storno' --json  # updates the given locales only
+lok rm 'Cancel' --json                    # removes the key + its plural variants everywhere
+lok scan --json                           # literal t('…') keys missing from the catalog + probable orphans
+lok scan --write --json                   # add the missing (en = key) → translate via `lok missing`
+```
+
+Writes preserve the file's key order and insert new keys at the
+case-insensitive alphabetical slot without reordering anything else, so a
+diff shows exactly the change. Only files whose content changed are
+rewritten; `afterWrite` runs once per write from the repo root.
+
+`scan` is deliberately asymmetric. A literal `t('…')` absent from the
+catalog is always a defect, so `--write` adds it. A catalog key never seen
+verbatim in source is only a hint — keys held in lookup tables, API
+messages passed through `t()`, template strings — so orphans are listed
+with a count and never deleted; `lok rm` is the explicit path.
+
+`--catalog <id>` is required only when a key exists in several catalogs or
+a write cannot be inferred; the diagnostic names the candidates.

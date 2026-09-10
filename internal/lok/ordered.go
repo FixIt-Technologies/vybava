@@ -1,0 +1,395 @@
+package lok
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// ---------------------------------------------------------------------------
+// Ordered JSON. Catalogs keep their key order, and inserts go to the sorted
+// slot without ever reordering existing keys — a diff shows only the change.
+//
+// Values: string (a translatable leaf), *Object, *Array, or Scalar (number,
+// bool, null — preserved verbatim, never translated).
+// ---------------------------------------------------------------------------
+
+// Entry is one key/value pair of an ordered object.
+type Entry struct {
+	Key   string
+	Value any
+}
+
+// Object is an insertion-ordered JSON object.
+type Object struct{ Entries []Entry }
+
+// Array is a JSON array; elements are addressed by numeric path segment.
+type Array struct{ Items []any }
+
+// Scalar is a non-string JSON leaf kept byte-for-byte.
+type Scalar json.RawMessage
+
+func (o *Object) index(key string) int {
+	for i, e := range o.Entries {
+		if e.Key == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// Get looks up a direct child.
+func (o *Object) Get(key string) (any, bool) {
+	if i := o.index(key); i >= 0 {
+		return o.Entries[i].Value, true
+	}
+	return nil, false
+}
+
+// less is the insertion order for new keys: case-insensitive, then exact.
+func less(a, b string) bool {
+	la, lb := strings.ToLower(a), strings.ToLower(b)
+	if la != lb {
+		return la < lb
+	}
+	return a < b
+}
+
+// Set replaces an existing child in place or inserts a new one at the first
+// slot whose key sorts after it (keys after that slot are left untouched even
+// if they are out of order — we never reorder what we did not write).
+func (o *Object) Set(key string, value any) {
+	if i := o.index(key); i >= 0 {
+		o.Entries[i].Value = value
+		return
+	}
+	at := len(o.Entries)
+	for i, e := range o.Entries {
+		if less(key, e.Key) {
+			at = i
+			break
+		}
+	}
+	o.Entries = append(o.Entries, Entry{})
+	copy(o.Entries[at+1:], o.Entries[at:])
+	o.Entries[at] = Entry{Key: key, Value: value}
+}
+
+// Delete removes a direct child; reports whether it existed.
+func (o *Object) Delete(key string) bool {
+	i := o.index(key)
+	if i < 0 {
+		return false
+	}
+	o.Entries = append(o.Entries[:i], o.Entries[i+1:]...)
+	return true
+}
+
+// ParseObject decodes a JSON object preserving key order.
+func ParseObject(data []byte) (*Object, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != '{' {
+		return nil, errors.New("catalog root is not an object")
+	}
+	obj, err := parseObjectBody(dec, "")
+	if err != nil {
+		return nil, err
+	}
+	if dec.More() {
+		return nil, errors.New("trailing content after the catalog object")
+	}
+	return obj, nil
+}
+
+func parseValue(dec *json.Decoder, tok json.Token, path string) (any, error) {
+	switch v := tok.(type) {
+	case string:
+		return v, nil
+	case json.Delim:
+		switch v {
+		case '{':
+			return parseObjectBody(dec, path)
+		case '[':
+			return parseArrayBody(dec, path)
+		}
+		return nil, fmt.Errorf("at %q: unexpected %v", path, v)
+	case nil:
+		return Scalar("null"), nil
+	case bool:
+		return Scalar(strconv.FormatBool(v)), nil
+	case json.Number:
+		return Scalar(v.String()), nil
+	default:
+		return nil, fmt.Errorf("at %q: unsupported value %v", path, tok)
+	}
+}
+
+func parseObjectBody(dec *json.Decoder, path string) (*Object, error) {
+	obj := &Object{}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		key, ok := tok.(string)
+		if !ok {
+			return nil, fmt.Errorf("at %q: non-string key %v", path, tok)
+		}
+		full := joinPath(path, key)
+		vt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		val, err := parseValue(dec, vt, full)
+		if err != nil {
+			return nil, err
+		}
+		obj.Entries = append(obj.Entries, Entry{Key: key, Value: val})
+	}
+	_, err := dec.Token() // closing }
+	return obj, err
+}
+
+func parseArrayBody(dec *json.Decoder, path string) (*Array, error) {
+	arr := &Array{}
+	for dec.More() {
+		vt, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		val, err := parseValue(dec, vt, joinPath(path, strconv.Itoa(len(arr.Items))))
+		if err != nil {
+			return nil, err
+		}
+		arr.Items = append(arr.Items, val)
+	}
+	_, err := dec.Token() // closing ]
+	return arr, err
+}
+
+func joinPath(prefix, seg string) string {
+	if prefix == "" {
+		return seg
+	}
+	return prefix + "." + seg
+}
+
+// Marshal renders with two-space indent and a trailing newline — the shape
+// JSON.stringify(o, null, 2) + "\n" produces.
+func (o *Object) Marshal() []byte {
+	var b bytes.Buffer
+	writeValue(&b, o, 0)
+	b.WriteByte('\n')
+	return b.Bytes()
+}
+
+func writeValue(b *bytes.Buffer, v any, depth int) {
+	indent := strings.Repeat("  ", depth+1)
+	switch x := v.(type) {
+	case string:
+		b.Write(jsonString(x))
+	case Scalar:
+		b.Write([]byte(x))
+	case *Object:
+		if len(x.Entries) == 0 {
+			b.WriteString("{}")
+			return
+		}
+		b.WriteString("{\n")
+		for i, e := range x.Entries {
+			b.WriteString(indent)
+			b.Write(jsonString(e.Key))
+			b.WriteString(": ")
+			writeValue(b, e.Value, depth+1)
+			if i < len(x.Entries)-1 {
+				b.WriteByte(',')
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString(strings.Repeat("  ", depth))
+		b.WriteByte('}')
+	case *Array:
+		if len(x.Items) == 0 {
+			b.WriteString("[]")
+			return
+		}
+		b.WriteString("[\n")
+		for i, it := range x.Items {
+			b.WriteString(indent)
+			writeValue(b, it, depth+1)
+			if i < len(x.Items)-1 {
+				b.WriteByte(',')
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString(strings.Repeat("  ", depth))
+		b.WriteByte(']')
+	}
+}
+
+// jsonString encodes like JSON.stringify: no HTML escaping, UTF-8 kept.
+func jsonString(s string) []byte {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(s)
+	return bytes.TrimRight(b.Bytes(), "\n")
+}
+
+// Leaves flattens to dotted-path → string value in file order; array
+// elements get numeric segments. Scalars are not leaves.
+func (o *Object) Leaves() []Entry {
+	var out []Entry
+	var walk func(any, string)
+	walk = func(v any, prefix string) {
+		switch x := v.(type) {
+		case string:
+			out = append(out, Entry{Key: prefix, Value: x})
+		case *Object:
+			for _, e := range x.Entries {
+				walk(e.Value, joinPath(prefix, e.Key))
+			}
+		case *Array:
+			for i, it := range x.Items {
+				walk(it, joinPath(prefix, strconv.Itoa(i)))
+			}
+		}
+	}
+	walk(o, "")
+	return out
+}
+
+// child steps one path segment into an object or array.
+func child(container any, seg string) (any, bool) {
+	switch x := container.(type) {
+	case *Object:
+		return x.Get(seg)
+	case *Array:
+		if i, err := strconv.Atoi(seg); err == nil && i >= 0 && i < len(x.Items) {
+			return x.Items[i], true
+		}
+	}
+	return nil, false
+}
+
+// setChild writes one segment; arrays accept an existing index or the next one.
+func setChild(container any, seg string, value any) error {
+	switch x := container.(type) {
+	case *Object:
+		x.Set(seg, value)
+		return nil
+	case *Array:
+		i, err := strconv.Atoi(seg)
+		if err != nil || i < 0 || i > len(x.Items) {
+			return fmt.Errorf("array index %q out of range (0..%d)", seg, len(x.Items))
+		}
+		if i == len(x.Items) {
+			x.Items = append(x.Items, value)
+		} else {
+			x.Items[i] = value
+		}
+		return nil
+	}
+	return fmt.Errorf("cannot set %q on a scalar", seg)
+}
+
+func deleteChild(container any, seg string) bool {
+	switch x := container.(type) {
+	case *Object:
+		return x.Delete(seg)
+	case *Array:
+		if i, err := strconv.Atoi(seg); err == nil && i >= 0 && i < len(x.Items) {
+			x.Items = append(x.Items[:i], x.Items[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// splitPath addresses nested catalogs; flat catalogs use the whole key.
+func (c *Catalog) splitPath(key string) []string {
+	if c.Config.Style == StylePath {
+		return strings.Split(key, ".")
+	}
+	return []string{key}
+}
+
+// Lookup returns the string value of key in one locale.
+func (c *Catalog) Lookup(locale, key string) (string, bool) {
+	loc, ok := c.Locales[locale]
+	if !ok {
+		return "", false
+	}
+	var cur any = loc.Object
+	for _, p := range c.splitPath(key) {
+		next, ok := child(cur, p)
+		if !ok {
+			return "", false
+		}
+		cur = next
+	}
+	s, ok := cur.(string)
+	return s, ok
+}
+
+// Put sets key in one locale, creating intermediate objects for path style.
+func (c *Catalog) Put(locale, key, value string) error {
+	loc, ok := c.Locales[locale]
+	if !ok {
+		return fmt.Errorf("catalog %q has no locale %q", c.ID, locale)
+	}
+	parts := c.splitPath(key)
+	var cur any = loc.Object
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := child(cur, p)
+		if !ok {
+			next = &Object{}
+			if err := setChild(cur, p, next); err != nil {
+				return fmt.Errorf("%s %q: %w", locale, key, err)
+			}
+		}
+		switch next.(type) {
+		case *Object, *Array:
+		default:
+			return fmt.Errorf("%s: %q is a leaf, cannot nest %q under it", locale, p, key)
+		}
+		cur = next
+	}
+	if existing, ok := child(cur, parts[len(parts)-1]); ok {
+		switch existing.(type) {
+		case *Object, *Array:
+			return fmt.Errorf("%s: %q is a container, not a string leaf", locale, key)
+		}
+	}
+	if err := setChild(cur, parts[len(parts)-1], value); err != nil {
+		return fmt.Errorf("%s %q: %w", locale, key, err)
+	}
+	loc.Exists = true
+	return nil
+}
+
+// Remove deletes key from one locale; reports whether it existed.
+func (c *Catalog) Remove(locale, key string) bool {
+	loc, ok := c.Locales[locale]
+	if !ok {
+		return false
+	}
+	parts := c.splitPath(key)
+	var cur any = loc.Object
+	for _, p := range parts[:len(parts)-1] {
+		next, ok := child(cur, p)
+		if !ok {
+			return false
+		}
+		cur = next
+	}
+	return deleteChild(cur, parts[len(parts)-1])
+}
