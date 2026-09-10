@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -148,8 +147,6 @@ func TestLokCatalogRule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "vybava.config.json"), []byte(`{"lok":{"catalogs":{"m":{"style":"english-as-key","files":"locales/{locale}.json","locales":["cs"]}}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	catalogOnce = sync.Once{}
-	catalogFiles = nil
 	if d := contextBashMatch("cat "+cat, root); d == nil || d.Rule != "context:locale-catalog" {
 		t.Fatalf("cat of a 3-line catalog must still block, got %v", d)
 	}

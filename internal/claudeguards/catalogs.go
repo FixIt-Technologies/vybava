@@ -1,10 +1,10 @@
 package claudeguards
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/henderson-tech/vybava/internal/vconfig"
 )
@@ -13,39 +13,37 @@ import (
 // context:locale-catalog — a file that vybava.config.ts declares as a `lok`
 // catalog is never read raw, not even a 200-line range: the catalog is
 // queried through `lok get/grep` and written through `lok add/set/rm`, which
-// keep every locale in sync. The config is read through vconfig's cache, so
-// the hook pays the bun evaluation once per config edit.
+// keep every locale in sync. The config comes through vconfig, whose on-disk
+// cache makes this a file read per call; a load failure means "no catalogs"
+// for THIS call only and is never remembered.
 // ---------------------------------------------------------------------------
 
-var (
-	catalogOnce  sync.Once
-	catalogFiles []string // absolute paths of every configured catalog file
-)
-
-// lokCatalogFiles resolves the configured catalog files for cwd, once.
+// lokCatalogFiles resolves the configured catalog files for cwd.
 func lokCatalogFiles(cwd string) []string {
-	catalogOnce.Do(func() {
-		cfg, err := vconfig.Load(cwd)
-		if err != nil {
-			return
+	cfg, err := vconfig.Load(cwd)
+	if err != nil {
+		return nil
+	}
+	raw, ok := cfg.Sections["lok"]
+	if !ok {
+		return nil
+	}
+	var lok struct {
+		Catalogs map[string]struct {
+			Files   string   `json:"files"`
+			Locales []string `json:"locales"`
+		} `json:"catalogs"`
+	}
+	if json.Unmarshal(raw, &lok) != nil { // the guard needs only paths; other fields may be anything
+		return nil
+	}
+	var files []string
+	for _, c := range lok.Catalogs {
+		for _, loc := range c.Locales {
+			files = append(files, filepath.Join(cfg.Root, strings.ReplaceAll(c.Files, "{locale}", loc)))
 		}
-		var lok struct {
-			Catalogs map[string]struct {
-				Files   string   `json:"files"`
-				Locales []string `json:"locales"`
-			} `json:"catalogs"`
-		}
-		// Unknown fields are fine here — the guard only needs paths.
-		if raw, ok := cfg.Sections["lok"]; ok {
-			_ = jsonUnmarshalLoose(raw, &lok)
-		}
-		for _, c := range lok.Catalogs {
-			for _, loc := range c.Locales {
-				catalogFiles = append(catalogFiles, filepath.Join(cfg.Root, strings.ReplaceAll(c.Files, "{locale}", loc)))
-			}
-		}
-	})
-	return catalogFiles
+	}
+	return files
 }
 
 func isLokCatalog(abs, cwd string) bool {

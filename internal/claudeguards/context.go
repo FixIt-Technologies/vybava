@@ -205,12 +205,22 @@ func appendDumpSegment(out []dumpSegment, raw string, piped bool) []dumpSegment 
 	return append(out, dumpSegment{text: s, consumed: piped || reFileRedirect.MatchString(s)})
 }
 
+// dumpVerdict is what dumpBudget decided about one read segment.
+type dumpVerdict int
+
+const (
+	dumpOK         dumpVerdict = iota // within budget, or not a read we track
+	dumpOverBudget                    // more than maxDumpLines would land in context
+	dumpTranscript                    // a ~/.claude/projects session transcript
+	dumpCatalog                       // a lok-managed locale catalog
+)
+
 // dumpBudget estimates how many lines a cat/sed/head/tail segment prints.
-// Returns the offending file and its size when the budget is exceeded.
-func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool) {
+// file and lines describe the offending file when the verdict is not dumpOK.
+func dumpBudget(seg, cwd string) (verdict dumpVerdict, file string, lines, total int) {
 	fields := shellFields(seg)
 	if len(fields) == 0 || !dumpCommands[fields[0]] {
-		return "", 0, 0, false
+		return dumpOK, "", 0, 0
 	}
 	limit := -1 // -1 = whole file
 	var paths []string
@@ -223,7 +233,7 @@ func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool
 			switch {
 			case a == "-n" || a == "-E" || a == "-r" || a == "--quiet" || a == "-i" || strings.HasPrefix(a, "-i"):
 				if a == "-i" || strings.HasPrefix(a, "-i") {
-					return "", 0, 0, false // in-place edit, prints nothing
+					return dumpOK, "", 0, 0 // in-place edit, prints nothing
 				}
 			case a == "-e" && i+1 < len(args):
 				i++
@@ -236,7 +246,7 @@ func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool
 			}
 		}
 		if limit == 0 {
-			return "", 0, 0, false // no print range we understand → pass
+			return dumpOK, "", 0, 0 // no print range we understand → pass
 		}
 	case "head", "tail":
 		limit = 10
@@ -246,13 +256,13 @@ func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool
 			case (a == "-n" || a == "-c") && i+1 < len(args):
 				i++
 				if a == "-c" {
-					return "", 0, 0, false
+					return dumpOK, "", 0, 0
 				}
 				limit = atoiOr(strings.TrimPrefix(args[i], "-"), maxDumpLines+1)
 			case strings.HasPrefix(a, "-n"):
 				limit = atoiOr(strings.TrimPrefix(a[2:], "-"), maxDumpLines+1)
 			case strings.HasPrefix(a, "-c"):
-				return "", 0, 0, false
+				return dumpOK, "", 0, 0
 			case strings.HasPrefix(a, "-") && len(a) > 1 && isDigits(a[1:]):
 				limit = atoiOr(a[1:], maxDumpLines+1)
 			case strings.HasPrefix(a, "-"):
@@ -270,10 +280,10 @@ func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool
 	for _, p := range paths {
 		abs := resolvePath(p, cwd)
 		if isTranscript(abs) {
-			return abs, 0, 0, true
+			return dumpTranscript, abs, 0, 0
 		}
 		if isLokCatalog(abs, cwd) {
-			return abs, -1, 0, false
+			return dumpCatalog, abs, 0, 0
 		}
 		n, ok := lineCount(abs)
 		if !ok {
@@ -289,9 +299,9 @@ func dumpBudget(seg, cwd string) (file string, lines, total int, transcript bool
 		}
 	}
 	if total > maxDumpLines {
-		return file, lines, total, false
+		return dumpOverBudget, file, lines, total
 	}
-	return "", 0, 0, false
+	return dumpOK, "", 0, 0
 }
 
 // addSedRange folds one `A,Bp` / `Ap` / `A,$p` expression into a line budget;
@@ -358,14 +368,12 @@ func contextBashMatch(cmd, cwd string) *Denial {
 		if allowRead || seg.consumed {
 			continue
 		}
-		file, lines, total, transcript := dumpBudget(seg.text, cwd)
-		if transcript {
+		switch verdict, file, lines, total := dumpBudget(seg.text, cwd); verdict {
+		case dumpTranscript:
 			return deny("context:transcript-dump", fmt.Sprintf(transcriptMsg, file), contextReadEscape)
-		}
-		if lines == -1 {
+		case dumpCatalog:
 			return catalogDenial(file)
-		}
-		if file != "" {
+		case dumpOverBudget:
 			return deny("context:whole-file-dump", fmt.Sprintf(wholeFileMsg, total, maxDumpLines, file, lines), contextReadEscape)
 		}
 	}

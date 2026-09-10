@@ -34,7 +34,9 @@ e2e:*             raw simctl screenshots and raw .e2e PNG reads
 commit-secrets    key files, secret-shaped lines, private infra strings in a public repo
 context:*         inline python/node scripts that write files · cat/tee over an
                   existing file · cat/sed/head/tail or Read above 200 lines ·
-                  dumping a ~/.claude/projects transcript
+                  dumping a ~/.claude/projects transcript · any raw read of a
+                  locale catalog declared in vybava.config.ts (lok.catalogs) —
+                  ranges included; the message points at lok get/grep/add
 ```
 
 The `context:*` family exists because the bypass-permissions harness text
