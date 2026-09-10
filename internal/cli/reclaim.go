@@ -66,7 +66,17 @@ unclassified — those are surfaced as by-hand notes at the end.`,
 				LookPath: exec.LookPath,
 				Free:     reclaim.Free,
 				Exec: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-					return exec.CommandContext(ctx, name, args...).CombinedOutput()
+					cmd := exec.CommandContext(ctx, name, args...)
+					// Never inherit the caller's project cwd: pnpm/npm/yarn refuse to run
+					// inside a repo whose packageManager pins another tool.
+					cmd.Dir = home
+					out, err := cmd.CombinedOutput()
+					if err != nil {
+						if line := firstLine(strings.TrimSpace(string(out))); line != "" {
+							err = fmt.Errorf("%w: %s", err, line)
+						}
+					}
+					return out, err
 				},
 				Stderr: func(s string) { fmt.Fprintln(rt.stderr, s) },
 			}

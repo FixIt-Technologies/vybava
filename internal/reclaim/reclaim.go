@@ -82,7 +82,9 @@ type Options struct {
 	Only, Skip []string
 	// KeepDays is the age below which Aged steps keep files (default 60).
 	KeepDays int
-	// StepTimeout bounds one step (default 5 minutes).
+	// StepTimeout bounds one step (default 15 minutes: tier-1 trees of millions
+	// of small files — bun/go-build caches — took over 5 minutes while Docker
+	// prune ran beside them and were left half-deleted).
 	StepTimeout time.Duration
 }
 
@@ -194,7 +196,7 @@ func Run(ctx context.Context, env Env, opts Options, progress Progress) (Report,
 	}
 	env.KeepDays = opts.KeepDays
 	if opts.StepTimeout <= 0 {
-		opts.StepTimeout = 5 * time.Minute
+		opts.StepTimeout = 15 * time.Minute
 	}
 	free, total, err := env.Free(env.Volume)
 	if err != nil {
