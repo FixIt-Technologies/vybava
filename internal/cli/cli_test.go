@@ -20,6 +20,7 @@ func TestMulticallDispatch(t *testing.T) {
 		{"handoffs", "handoffs"},
 		{"operator", "operator"},
 		{"plaud", "plaud"},
+		{"claude-guards", "claude-guards"},
 		{"/usr/local/bin/perfrig", "perfrig"}, // dispatch is on the basename
 		{"vybava", "vybava"},
 	}

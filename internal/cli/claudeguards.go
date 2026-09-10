@@ -1,0 +1,148 @@
+package cli
+
+import (
+	"fmt"
+
+	"github.com/henderson-tech/vybava/internal/claudeguards"
+	"github.com/henderson-tech/vybava/internal/runx"
+	"github.com/spf13/cobra"
+)
+
+func (rt *runtime) claudeGuardsApplet() *cobra.Command {
+	cmd := rt.claudeGuardsCommand("claude-guards")
+	cmd.SilenceErrors, cmd.SilenceUsage = true, true
+	cmd.SetOut(rt.stdout)
+	cmd.SetErr(rt.stderr)
+	cmd.PersistentFlags().BoolVar(&rt.json, "json", false, "emit machine-readable output")
+	return cmd
+}
+
+// claudeGuardsCommand wires the hook verbs. The hook verbs (bash, read) speak
+// Claude Code's contract — reason on stderr, exit 2 — so they never emit the
+// envelope; `check` is the same decision behind the envelope for humans,
+// tests and skills.
+func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
+	root := &cobra.Command{
+		Use:   use,
+		Short: "PreToolUse guard hooks for Claude Code — destructive git/docker, secret dumps, context-budget rules",
+		Long: "claude-guards enforces the hard bans of ~/.claude/CLAUDE.md at the tool boundary,\n" +
+			"including under bypass permissions and inside subagents. Wire it in settings.json:\n" +
+			"  PreToolUse Bash → claude-guards bash · PreToolUse Read → claude-guards read\n" +
+			"  SessionStart → claude-guards swarm-teardown --dead-only · SessionEnd → claude-guards swarm-teardown\n" +
+			"A block prints its reason and the sanctioned alternative on stderr and exits 2.",
+	}
+	hook := func(name, short string, decide func(*claudeguards.HookInput) *claudeguards.Denial) *cobra.Command {
+		return &cobra.Command{
+			Use:   name,
+			Short: short,
+			Args:  cobra.NoArgs,
+			RunE: func(_ *cobra.Command, _ []string) error {
+				in, err := claudeguards.ReadInput(rt.stdin)
+				if err != nil {
+					return nil // fail open: malformed payload must never brick the session
+				}
+				d := decide(in)
+				if d == nil {
+					return nil
+				}
+				if _, err := fmt.Fprint(rt.stderr, d.Text()); err != nil {
+					return err
+				}
+				return ErrHookBlocked
+			},
+		}
+	}
+	root.AddCommand(hook("bash", "PreToolUse:Bash — every command rule (stdin: hook JSON)", claudeguards.Bash))
+	root.AddCommand(hook("read", "PreToolUse:Read — raw .e2e PNGs, transcripts, over-budget reads (stdin: hook JSON)", claudeguards.Read))
+
+	var cwd string
+	check := &cobra.Command{
+		Use:   "check <bash|read> <command-or-path>",
+		Short: "Evaluate the rules against a command or path without a hook payload",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s := &runx.Session{Tool: "claude-guards", JSON: rt.json, Verb: cmd.Name(), Stdout: rt.stdout, Stderr: rt.stderr}
+			in := &claudeguards.HookInput{CWD: cwd}
+			var d *claudeguards.Denial
+			switch args[0] {
+			case "bash":
+				in.ToolInput.Command = args[1]
+				d = claudeguards.Bash(in)
+			case "read":
+				in.ToolInput.FilePath = args[1]
+				d = claudeguards.Read(in)
+			default:
+				return finishGuardCheck(s, nil, &runx.DiagError{Diag: runx.Diagnostic{
+					Code: guardDiagUsage, Severity: "error",
+					Detail: fmt.Sprintf("unknown tool %q — the first argument names the hook", args[0]),
+					Fix:    fmt.Sprintf("claude-guards check bash %q --json", args[1]),
+				}})
+			}
+			return finishGuardCheck(s, d, nil)
+		},
+	}
+	check.Flags().StringVar(&cwd, "cwd", "", "directory the command would run in (default: current)")
+	root.AddCommand(check)
+
+	var deadOnly bool
+	teardown := &cobra.Command{
+		Use:   "swarm-teardown",
+		Short: "Kill this session's swarm tmux server and sweep dead ones (SessionEnd); --dead-only for SessionStart",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			claudeguards.SwarmTeardown(deadOnly, rt.stderr)
+			return nil
+		},
+	}
+	teardown.Flags().BoolVar(&deadOnly, "dead-only", false, "sweep dead leaders only; never touch the caller's own swarm")
+	root.AddCommand(teardown)
+
+	root.AddCommand(&cobra.Command{
+		Use:    "refresh-visibility <repo-dir> <cache-file>",
+		Short:  "internal: background repo-visibility refresh spawned by the commit-secrets rule",
+		Hidden: true,
+		Args:   cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			claudeguards.RefreshVisibility(args[0], args[1])
+			return nil
+		},
+	})
+	return root
+}
+
+// Closed diagnostic codes for `claude-guards check`.
+const (
+	// guardDiagBlocked fires when a rule matched; data.rule names it and the
+	// detail carries the same reason the hook prints. Fix is the escape hatch.
+	guardDiagBlocked = "BLOCKED"
+	// guardDiagUsage fires on a wrong tool name; fix is the corrected invocation.
+	guardDiagUsage = "USAGE"
+)
+
+type guardCheckData struct {
+	Rule string `json:"rule,omitempty"`
+}
+
+func finishGuardCheck(s *runx.Session, d *claudeguards.Denial, usage *runx.DiagError) error {
+	env := runx.Envelope{V: runx.EnvelopeVersion, OK: true, Verb: s.Verb, Data: guardCheckData{}, Diagnostics: []runx.Diagnostic{}, Next: []string{}}
+	var err error
+	switch {
+	case usage != nil:
+		env.OK = false
+		env.Diagnostics = append(env.Diagnostics, usage.Diag)
+		env.Next = append(env.Next, usage.Diag.Fix)
+		err = usage
+	case d != nil:
+		env.OK = false
+		env.Data = guardCheckData{Rule: d.Rule}
+		env.Diagnostics = append(env.Diagnostics, runx.Diagnostic{Code: guardDiagBlocked, Severity: "error", Detail: d.Rule + ": " + d.Message, Fix: d.EscapeHatch})
+		err = &runx.DiagError{Diag: env.Diagnostics[0]}
+	}
+	if emitErr := s.Emit(env); emitErr != nil {
+		return emitErr
+	}
+	if code := s.Finish(err); code != 0 {
+		return runx.ExitError{Code: code}
+	}
+	return nil
+}
