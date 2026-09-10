@@ -10,6 +10,7 @@ every item installs independently.
 | ID | Kind | What it does |
 |---|---|---|
 | `memorylint` | applet | Validate and maintain AI memory homes — schema, indexes, wikilinks, fixtures, write hooks. → [docs/memorylint.md](docs/memorylint.md) |
+| `claude-guards` | applet | PreToolUse guard hooks for Claude Code — destructive git/docker, secret dumps, host-input automation, commit secrets, and the context-budget rules (no shell-rewritten files, no whole-file dumps, no transcript reads). → [docs/claude-guards.md](docs/claude-guards.md) |
 | `shrt` | applet | Terminal-safe short links on luko.to — offline repo rules, team-shared dynamic rules, minted codes; also the redirector server. → [docs/shrt.md](docs/shrt.md) |
 | `fontfreeze` | applet | Freeze variable webfonts at rendered axis positions and subset per language. |
 | `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |

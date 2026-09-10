@@ -1,6 +1,12 @@
 schema_version: 1
 
 items:
+  - id: claude-guards
+    kind: applet
+    status: experimental
+    description: PreToolUse guard hooks for Claude Code — block destructive git/docker calls, secret and environment dumps, host-input automation, commit-time secrets, and the context-budget sinks (shell-rewritten files, whole-file dumps, transcript reads); every block names the sanctioned alternative.
+    applet: claude-guards
+
   - id: envbridge
     kind: applet
     status: experimental
@@ -160,6 +166,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - claude-guards
       - envbridge
       - codexsync
       - codexusage
@@ -202,6 +209,7 @@ groups:
   - id: everything
     description: Every package currently published by Výbava.
     items:
+      - claude-guards
       - envbridge
       - memorylint
       - fontfreeze
