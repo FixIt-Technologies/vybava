@@ -181,6 +181,7 @@ groups:
       - lok
       - claude-guards
       - envbridge
+      - posta
       - codexsync
       - codexusage
       - hotfix
@@ -225,6 +226,7 @@ groups:
       - lok
       - claude-guards
       - envbridge
+      - posta
       - memorylint
       - fontfreeze
       - perfrig
