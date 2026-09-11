@@ -121,6 +121,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "lok" {
 		return rt.lokApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "posta" {
+		return rt.postaApplet(), nil
+	}
 
 	root := &cobra.Command{
 		Use:           "vybava",
@@ -155,6 +158,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.envbridgeCommand(),
 		rt.claudeGuardsCommand("claude-guards"),
 		rt.lokCommand("lok"),
+		rt.postaCommand("posta"),
 		rt.configCommand(),
 		rt.browseCommand(),
 	)

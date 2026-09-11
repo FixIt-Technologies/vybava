@@ -13,6 +13,12 @@ items:
     description: Locale catalogs for AI sessions — never read whole. Configured in vybava.config.ts (lok.catalogs), queried by key (get, grep, missing), written by verb with every locale kept in sync (add, set, rm), extracted from source (scan), gated in CI (check).
     applet: lok
 
+  - id: posta
+    kind: applet
+    status: experimental
+    description: Drive a shared test mailbox end to end — mint a per-run plus-address, wait for the message a journey triggered, take its links and attachments, send and purge; the app password is injected from the vault and never printed.
+    applet: posta
+
   - id: envbridge
     kind: applet
     status: experimental
