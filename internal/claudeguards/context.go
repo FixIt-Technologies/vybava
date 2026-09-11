@@ -124,10 +124,14 @@ func lineCount(abs string) (int, bool) {
 	}
 	defer f.Close()
 	n := 0
+	last := byte('\n')
 	buf := make([]byte, 64<<10)
 	var total int64
 	for total < 4<<20 {
 		k, err := f.Read(buf)
+		if k > 0 {
+			last = buf[k-1]
+		}
 		n += bytes.Count(buf[:k], []byte{'\n'})
 		total += int64(k)
 		if err == io.EOF {
@@ -138,7 +142,10 @@ func lineCount(abs string) (int, bool) {
 		}
 	}
 	if total >= 4<<20 {
-		return maxDumpLines + 1, true
+		return int(^uint(0) >> 2), true
+	}
+	if total > 0 && last != '\n' {
+		n++
 	}
 	return n, true
 }
@@ -213,11 +220,17 @@ const (
 	dumpOverBudget                    // more than maxDumpLines would land in context
 	dumpTranscript                    // a ~/.claude/projects session transcript
 	dumpCatalog                       // a lok-managed locale catalog
+	dumpNoRead                        // a configured generated file
 )
 
 // dumpBudget estimates how many lines a cat/sed/head/tail segment prints.
 // file and lines describe the offending file when the verdict is not dumpOK.
 func dumpBudget(seg, cwd string) (verdict dumpVerdict, file string, lines, total int) {
+	return dumpBudgetWithLimit(seg, cwd, guardConfig(cwd).MaxDumpLines)
+}
+
+func dumpBudgetWithLimit(seg, cwd string, budget int) (verdict dumpVerdict, file string, lines, total int) {
+	cfg := guardConfig(cwd)
 	fields := shellFields(seg)
 	if len(fields) == 0 || !dumpCommands[fields[0]] {
 		return dumpOK, "", 0, 0
@@ -279,6 +292,9 @@ func dumpBudget(seg, cwd string) (verdict dumpVerdict, file string, lines, total
 	}
 	for _, p := range paths {
 		abs := resolvePath(p, cwd)
+		if cfg.noRead(abs) {
+			return dumpNoRead, abs, 0, 0
+		}
 		if isTranscript(abs) {
 			return dumpTranscript, abs, 0, 0
 		}
@@ -294,11 +310,11 @@ func dumpBudget(seg, cwd string) (verdict dumpVerdict, file string, lines, total
 			printed = limit
 		}
 		total += printed
-		if total > maxDumpLines && file == "" {
+		if total > budget && file == "" {
 			file, lines = abs, n
 		}
 	}
-	if total > maxDumpLines {
+	if total > budget {
 		return dumpOverBudget, file, lines, total
 	}
 	return dumpOK, "", 0, 0
@@ -314,7 +330,7 @@ func addSedRange(limit int, expr string) int {
 		}
 		switch {
 		case m[1] == "" || (strings.Contains(part, ",") && m[2] == ""):
-			return maxDumpLines + 1 // `$p` or `A,$p`: rest of file
+			return int(^uint(0) >> 2) // conservatively treat an open range as unbounded
 		case m[2] == "":
 			limit++
 		default:
@@ -350,6 +366,7 @@ func contextBashMatch(cmd, cwd string) *Denial {
 	}
 	allowWrite := escapeHatch(cmd, "CLAUDE_ALLOW_SHELL_EDIT")
 	allowRead := escapeHatch(cmd, "CLAUDE_ALLOW_CONTEXT_DUMP")
+	cfg := guardConfig(cwd)
 
 	if !allowWrite && reInlineScript.MatchString(cmd) && reScriptWrites.MatchString(cmd) {
 		return deny("context:inline-script-write", inlineScriptMsg, contextWriteEscape)
@@ -368,13 +385,18 @@ func contextBashMatch(cmd, cwd string) *Denial {
 		if allowRead || seg.consumed {
 			continue
 		}
+		if d := unboundedOutput(seg.text, cfg); d != nil {
+			return d
+		}
 		switch verdict, file, lines, total := dumpBudget(seg.text, cwd); verdict {
 		case dumpTranscript:
 			return deny("context:transcript-dump", fmt.Sprintf(transcriptMsg, file), contextReadEscape)
 		case dumpCatalog:
 			return catalogDenial(file)
+		case dumpNoRead:
+			return noReadDenial(file)
 		case dumpOverBudget:
-			return deny("context:whole-file-dump", fmt.Sprintf(wholeFileMsg, total, maxDumpLines, file, lines), contextReadEscape)
+			return deny("context:whole-file-dump", fmt.Sprintf(wholeFileMsg, total, cfg.MaxDumpLines, file, lines), contextReadEscape)
 		}
 	}
 	return nil
@@ -398,24 +420,31 @@ func contextReadMatch(path string, limit int, cwd string) *Denial {
 		return nil
 	}
 	abs := resolvePath(path, cwd)
+	cfg := guardConfig(cwd)
+	if cfg.noRead(abs) {
+		return noReadDenial(abs)
+	}
 	if isTranscript(abs) {
 		return deny("context:transcript-dump", fmt.Sprintf(transcriptMsg, abs), "")
 	}
 	if isLokCatalog(abs, cwd) {
 		return catalogDenial(abs)
 	}
-	if limit > 0 || noLineBudget[strings.ToLower(filepath.Ext(abs))] {
+	if (limit > 0 && limit <= cfg.MaxDumpLines) || noLineBudget[strings.ToLower(filepath.Ext(abs))] {
 		return nil
 	}
 	n, ok := lineCount(abs)
-	if !ok || n <= maxDumpLines {
+	if !ok || n <= cfg.MaxDumpLines {
 		return nil
 	}
-	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, n, maxDumpLines), "")
+	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, n, cfg.MaxDumpLines), "")
 }
 
 func guardContextBash(in *HookInput) *Denial { return contextBashMatch(in.ToolInput.Command, in.CWD) }
 func guardContextRead(in *HookInput) *Denial {
+	if os.Getenv("CLAUDE_ALLOW_CONTEXT_DUMP") == "1" {
+		return nil
+	}
 	return contextReadMatch(in.ToolInput.FilePath, in.ToolInput.Limit, in.CWD)
 }
 

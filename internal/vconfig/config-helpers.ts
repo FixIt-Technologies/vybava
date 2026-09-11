@@ -41,6 +41,14 @@ export interface LokConfig {
 
 export interface VybavaConfig {
   lok?: LokConfig;
+  guards?: {
+    /** Repository-relative globs; ** spans directories. Query these files with rg. */
+    noRead?: string[];
+    /** Maximum text lines per read (default: 200). */
+    maxDumpLines?: number;
+    /** Commands requiring capped output. Omit for built-ins; [] disables this rule. */
+    unboundedCommands?: string[];
+  };
 }
 
 /** Identity with types — the config file's default export. */

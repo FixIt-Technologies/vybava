@@ -54,3 +54,43 @@ claude-guards check bash "git stash" --json
 claude-guards check bash "cat apps/client/locales/cs.json" --cwd ~/Work/Projects/FixIt --json
 claude-guards check read apps/client/locales/cs.json --json
 ```
+
+## Context tiers and diagnosis
+
+The hook tails at most 4 MiB of `transcript_path` and uses the latest assistant
+input + cache-creation + cache-read usage, not cumulative billed tokens.
+Recognized Fable/Opus/Sonnet 5 models have a 1M window; Haiku has 200k.
+Unknown models or unavailable usage fail open with an explicit notice.
+
+At 50%, a private `<transcript>.budget-50` marker makes a model-visible reminder
+once per transcript. The hook emits `hookSpecificOutput.additionalContext` on
+stdout (exit 0); stderr alone is not a reminder delivery mechanism.
+At 70%, text Reads or shell reads above 100 lines are denied until compaction
+lowers usage. Screenshots remain available; existing E2E hygiene rules still
+apply. `CLAUDE_ALLOW_CONTEXT_DUMP=1` is the explicit escape hatch (an inherited
+environment variable for Read, a leading assignment for Bash).
+
+`context:unbounded-output` requests caps for `docker logs`, GitHub run logs,
+`git log`, unspecialized `git diff/show`, and broad Bun/Go/Jest test runs.
+Examples: `docker logs --tail 200 app`, `git log -n 20`, `git diff --stat`,
+or redirect test output to a file and inspect its tail. Pipes and redirects
+retain the existing exemption. This is a command-shape guard, not a shell
+interpreter or a guaranteed byte limit for arbitrary commands.
+
+`guards.noRead` denies raw reads of generated paths, including short ranges;
+use `rg` or inspect their generating source. `guards.maxDumpLines` replaces
+the normal 200-line allowance. See [config](config.md) for discovery.
+
+```text
+claude-guards ctx latest
+claude-guards ctx f9ee8c4e --json
+```
+
+`ctx` resolves a unique session filename prefix and reads it without modifying
+it. The report includes recorded output/thinking usage, peak context, per-hour
+growth, per-tool text estimates, top 15 results, image dimensions and estimates,
+and recorded SessionStart todo hooks. Missing/malformed records are counted;
+unknown image dimensions are explicit. Character-based text estimates and PNG
+pixel estimates (long edge capped at 1568, area / 750) are approximate. Output
+tokens include thinking; do not add thinking again. Saved transcripts may not
+retain every resume's hook event, so hook counts describe recorded evidence.

@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/henderson-tech/vybava/internal/claudeguards"
 	"github.com/henderson-tech/vybava/internal/runx"
@@ -43,6 +46,11 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 				}
 				d := decide(in)
 				if d == nil {
+					if context := claudeguards.BudgetContext(in); context != "" {
+						return json.NewEncoder(rt.stdout).Encode(map[string]map[string]string{
+							"hookSpecificOutput": map[string]string{"hookEventName": "PreToolUse", "additionalContext": context},
+						})
+					}
 					return nil
 				}
 				if _, err := fmt.Fprint(rt.stderr, d.Text()); err != nil {
@@ -83,6 +91,28 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 	}
 	check.Flags().StringVar(&cwd, "cwd", "", "directory the command would run in (default: current)")
 	root.AddCommand(check)
+	root.AddCommand(&cobra.Command{
+		Use: "ctx <session-id|latest>", Short: "Diagnose transcript context growth without dumping conversation content", Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			s := &runx.Session{Tool: "claude-guards", JSON: rt.json, Verb: cmd.Name(), Stdout: rt.stdout, Stderr: rt.stderr}
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return err
+			}
+			path, err := claudeguards.ResolveTranscript(filepath.Join(home, ".claude", "projects"), args[0])
+			if err != nil {
+				return finishGuardCheck(s, nil, &runx.DiagError{Diag: runx.Diagnostic{Code: "TRANSCRIPT_UNAVAILABLE", Severity: "error", Detail: err.Error(), Fix: "claude-guards ctx <longer-session-id>"}})
+			}
+			report, err := claudeguards.DiagnoseContext(path)
+			if err != nil {
+				return finishGuardCheck(s, nil, &runx.DiagError{Diag: runx.Diagnostic{Code: "TRANSCRIPT_UNAVAILABLE", Severity: "error", Detail: err.Error()}})
+			}
+			if !rt.json {
+				return report.Render(rt.stdout)
+			}
+			return s.Emit(runx.Envelope{OK: true, Verb: s.Verb, Data: report, Diagnostics: []runx.Diagnostic{}, Next: []string{}})
+		},
+	})
 
 	var deadOnly bool
 	teardown := &cobra.Command{

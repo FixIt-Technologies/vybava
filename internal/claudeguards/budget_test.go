@@ -1,0 +1,71 @@
+package claudeguards
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestBudgetTiers(t *testing.T) {
+	root := t.TempDir()
+	transcript := filepath.Join(root, "session.jsonl")
+	file := filepath.Join(root, "source.ts")
+	if err := os.WriteFile(file, []byte(strings.Repeat("x\n", 300)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		model                string
+		tokens               int
+		limit                int
+		image, block, remind bool
+	}{
+		{"claude-fable-5-1", 499999, 101, false, false, false},
+		{"claude-fable-5-1", 500000, 101, false, false, true},
+		{"claude-opus-5", 700000, 101, false, true, true},
+		{"claude-sonnet-5", 700000, 100, false, false, true},
+		{"claude-haiku-4-5", 140000, 0, false, true, true},
+		{"claude-fable-5-1", 900000, 0, true, false, true},
+		{"unknown", 900000, 0, false, false, false},
+	} {
+		t.Run(fmt.Sprintf("%s-%d-%d-%v", tc.model, tc.tokens, tc.limit, tc.image), func(t *testing.T) {
+			row := fmt.Sprintf(`{"type":"assistant","message":{"model":%q,"usage":{"input_tokens":10,"cache_creation_input_tokens":20,"cache_read_input_tokens":%d}}}`, tc.model, tc.tokens-30)
+			if err := os.WriteFile(transcript, []byte(row+"\n{partial"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(transcript + ".budget-50"); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			in := &HookInput{CWD: root, TranscriptPath: transcript}
+			in.ToolInput.FilePath, in.ToolInput.Limit = file, tc.limit
+			if tc.image {
+				in.ToolInput.FilePath = filepath.Join(root, "shot.png")
+			}
+			if got := guardBudget(in); (got != nil) != tc.block {
+				t.Fatalf("denial = %v", got)
+			}
+			message := BudgetContext(in)
+			if strings.HasPrefix(message, "Context at") != tc.remind {
+				t.Fatalf("reminder = %q", message)
+			}
+			if tc.remind && BudgetContext(in) != "" {
+				t.Fatal("duplicate reminder")
+			}
+			in.ToolInput.FilePath = ""
+			in.ToolInput.Command = "sed -n '1,101p' " + file
+			if b, err := ReadBudget(transcript); err == nil && b.Percent() >= 70 {
+				if guardBudget(in) == nil {
+					t.Fatal("unbounded shell read allowed")
+				}
+				in.ToolInput.Command += " | tail -10"
+				if guardBudget(in) != nil {
+					t.Fatal("capped pipeline denied")
+				}
+			}
+		})
+	}
+	if _, err := ReadBudget(filepath.Join(root, "missing")); err == nil {
+		t.Fatal("missing transcript must report unavailable")
+	}
+}
