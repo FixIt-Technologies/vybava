@@ -28,6 +28,7 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 		Long: "claude-guards enforces the hard bans of ~/.claude/CLAUDE.md at the tool boundary,\n" +
 			"including under bypass permissions and inside subagents. Wire it in settings.json:\n" +
 			"  PreToolUse Bash → claude-guards bash · PreToolUse Read → claude-guards read\n" +
+			"  PreToolUse mcp__playwright__.*|mcp__plugin_chrome-devtools-mcp_chrome-devtools__.* → claude-guards browser\n" +
 			"  SessionStart → claude-guards swarm-teardown --dead-only · SessionEnd → claude-guards swarm-teardown\n" +
 			"A block prints its reason and the sanctioned alternative on stderr and exits 2.",
 	}
@@ -54,6 +55,7 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 	}
 	root.AddCommand(hook("bash", "PreToolUse:Bash — every command rule (stdin: hook JSON)", claudeguards.Bash))
 	root.AddCommand(hook("read", "PreToolUse:Read — raw .e2e PNGs, transcripts, over-budget reads (stdin: hook JSON)", claudeguards.Read))
+	root.AddCommand(hook("browser", "PreToolUse:mcp__playwright__*|mcp__plugin_chrome-devtools-mcp_chrome-devtools__* — this session's Onyx browser must be running (stdin: hook JSON)", claudeguards.Browser))
 
 	var cwd string
 	check := &cobra.Command{
