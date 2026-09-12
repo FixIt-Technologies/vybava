@@ -70,9 +70,18 @@ func NativeSample(ctx context.Context) (Sample, error) {
 // WindowContext reads only the foreground window title. Consumers must match
 // locally and discard the raw title; no transcript, keystroke or URL is read.
 func WindowContext(ctx context.Context, sample Sample) Sample {
-	raw, err := exec.CommandContext(ctx, "/usr/bin/osascript", "-e", `with timeout of 2 seconds
+	return DarwinWindowContext(ctx, sample, func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		return exec.CommandContext(ctx, name, args...).Output()
+	})
+}
+
+// DarwinWindowContext exposes the subprocess seam for permission-failure tests.
+func DarwinWindowContext(ctx context.Context, sample Sample, run Exec) Sample {
+	sample.WindowTitle = ""
+	sample.ContextError = ""
+	raw, err := run(ctx, "/usr/bin/osascript", "-e", `with timeout of 2 seconds
 tell application "System Events" to get name of front window of first application process whose frontmost is true
-end timeout`).Output()
+end timeout`)
 	if err != nil {
 		sample.ContextError = "Foreground window context unavailable; allow Accessibility for the collector to enable task matching."
 		return sample

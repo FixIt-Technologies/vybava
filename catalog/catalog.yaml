@@ -190,6 +190,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - worktime
       - lok
       - claude-guards
       - envbridge
@@ -236,6 +237,7 @@ groups:
   - id: everything
     description: Every package currently published by Výbava.
     items:
+      - worktime
       - lok
       - claude-guards
       - envbridge

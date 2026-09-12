@@ -20,21 +20,30 @@ func (rt *runtime) worktimeApplet() *cobra.Command {
 }
 
 func (rt *runtime) worktimeCommand(use string) *cobra.Command {
+	return rt.worktimeCommandWithSources(use, worktime.NativeSample, worktime.WindowContext)
+}
+
+func (rt *runtime) worktimeCommandWithSources(use string, native func(context.Context) (worktime.Sample, error), window func(context.Context, worktime.Sample) worktime.Sample) *cobra.Command {
 	c := &cobra.Command{Use: use, Short: "Observe foreground application and idle duration without recording content"}
 	var interval time.Duration
 	var windowContext bool
 	sample := &cobra.Command{Use: "sample", Short: "Read one native activity sample", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), 8*time.Second)
 		defer cancel()
-		s, err := worktime.NativeSample(ctx)
+		s, err := native(ctx)
 		if err != nil {
 			return err
 		}
 		if windowContext {
-			s = worktime.WindowContext(ctx, s)
+			s = window(ctx, s)
 		}
 		if rt.json {
 			return json.NewEncoder(rt.stdout).Encode(s)
+		}
+		if s.ContextError != "" {
+			if _, err = fmt.Fprintf(rt.stderr, "Warning: %s\n", s.ContextError); err != nil {
+				return err
+			}
 		}
 		_, err = fmt.Fprintf(rt.stdout, "%s · idle %.0fs\n", s.Application, s.IdleSeconds)
 		return err
@@ -47,10 +56,16 @@ func (rt *runtime) worktimeCommand(use string) *cobra.Command {
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		for {
+			if err := cmd.Context().Err(); err != nil {
+				return err
+			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), 8*time.Second)
-			s, err := worktime.NativeSample(ctx)
+			s, err := native(ctx)
 			cancel()
 			if err != nil {
+				return err
+			}
+			if err := cmd.Context().Err(); err != nil {
 				return err
 			}
 			if err := json.NewEncoder(rt.stdout).Encode(s); err != nil {
