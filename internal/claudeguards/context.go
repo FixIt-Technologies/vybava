@@ -211,10 +211,17 @@ type dumpSegment struct {
 // reducingSinks shrink what a pipe delivers, so a read feeding one never
 // reaches context whole. `cat`, `tee`, `less` and `more` reproduce their input
 // verbatim: piping into them is still a dump, and used to slip every read rule.
+//
+// The list is deliberately short. `sort`, `uniq`, `awk`, `sed`, `cut`, `xargs`
+// and interpreters were here once, and none of them bound anything: `sort`,
+// `awk '{print}'` and `sed -n p` all reproduce every input line. Only counters,
+// head/tail, and the documented query tools earn a place. Anything else has
+// CLAUDE_ALLOW_CONTEXT_DUMP=1.
 var reducingSinks = map[string]bool{
-	"jq": true, "yq": true, "grep": true, "egrep": true, "fgrep": true, "rg": true,
-	"head": true, "tail": true, "wc": true, "awk": true, "sed": true, "cut": true,
-	"sort": true, "uniq": true, "column": true, "xargs": true, "python3": true, "node": true,
+	"grep": true, "egrep": true, "fgrep": true, "rg": true, // the sanctioned query path
+	"jq": true, "yq": true, // structured query; `jq .` is the documented transcript idiom
+	"head": true, "tail": true, // genuinely bounded
+	"wc": true, "count": true, // counters emit a number
 }
 
 // reducesOutput reports whether a pipe's downstream segment bounds its input.
@@ -272,12 +279,15 @@ const (
 
 // dumpBudget estimates how many lines a cat/sed/head/tail segment prints.
 // file and lines describe the offending file when the verdict is not dumpOK.
-func dumpBudget(seg, cwd string) (verdict dumpVerdict, file string, lines, total int) {
-	return dumpBudgetWithLimit(seg, cwd, guardConfig(cwd).MaxDumpLines)
+// The caller passes the config it already loaded. Re-reading it here ran
+// vconfig.Load — and its `git rev-parse` — two or three times per shell
+// segment, ~318 ms per hook call on a large repo. It stays a parameter rather
+// than a package cache: a guard rule must not carry process-global state.
+func dumpBudget(seg, cwd string, cfg Config) (verdict dumpVerdict, file string, lines, total int) {
+	return dumpBudgetWithLimit(seg, cwd, cfg, cfg.MaxDumpLines)
 }
 
-func dumpBudgetWithLimit(seg, cwd string, budget int) (verdict dumpVerdict, file string, lines, total int) {
-	cfg := guardConfig(cwd)
+func dumpBudgetWithLimit(seg, cwd string, cfg Config, budget int) (verdict dumpVerdict, file string, lines, total int) {
 	fields := shellFields(seg)
 	if len(fields) == 0 || !dumpCommands[fields[0]] {
 		return dumpOK, "", 0, 0
@@ -438,7 +448,7 @@ func contextBashMatch(cmd, cwd string) *Denial {
 		if d := unboundedOutput(seg.text, cfg); d != nil {
 			return d
 		}
-		switch verdict, file, lines, total := dumpBudget(seg.text, cwd); verdict {
+		switch verdict, file, lines, total := dumpBudget(seg.text, cwd, cfg); verdict {
 		case dumpTranscript:
 			return deny("context:transcript-dump", fmt.Sprintf(transcriptMsg, file), contextReadEscape)
 		case dumpCatalog:

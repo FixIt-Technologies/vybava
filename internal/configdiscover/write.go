@@ -96,7 +96,15 @@ func (r Result) WriteAbsent(cfg *vconfig.Config) ([]string, error) {
 	if err = f.Close(); err != nil {
 		return nil, err
 	}
-	if err = os.Rename(f.Name(), cfg.Path); err != nil {
+	// Write THROUGH a symlink, never over it: vconfig.Find stats rather than
+	// lstats, so a config symlinked into the repo resolves fine on read, and a
+	// plain rename would silently replace the link with a regular file and
+	// strand whatever it pointed at.
+	dest := cfg.Path
+	if resolved, err := filepath.EvalSymlinks(dest); err == nil {
+		dest = resolved
+	}
+	if err = os.Rename(f.Name(), dest); err != nil {
 		return nil, err
 	}
 	return sections, nil

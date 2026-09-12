@@ -70,6 +70,38 @@ func TestBudgetTiers(t *testing.T) {
 	}
 }
 
+// What a Read delivers is bounded by the offset as well as the limit, so the
+// 70% tier must count what is left of the file, not the whole of it.
+func TestBudgetReadCountsRemainingAfterOffset(t *testing.T) {
+	root := t.TempDir()
+	transcript := filepath.Join(root, "s.jsonl")
+	row := `{"type":"assistant","message":{"model":"claude-opus-5","usage":{"input_tokens":800000}}}`
+	if err := os.WriteFile(transcript, []byte(row+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(root, "source.ts")
+	if err := os.WriteFile(file, []byte(strings.Repeat("x\n", 300)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	at := func(offset, limit int) *Denial {
+		in := &HookInput{CWD: root, TranscriptPath: transcript, SessionID: "s"}
+		in.ToolInput.FilePath, in.ToolInput.Offset, in.ToolInput.Limit = file, offset, limit
+		return guardBudget(in)
+	}
+	if d := at(250, 0); d != nil {
+		t.Fatalf("50 lines remain after the offset — must be allowed, got %v", d)
+	}
+	if d := at(250, 200); d != nil {
+		t.Fatalf("the file runs out before the limit does — must be allowed, got %v", d)
+	}
+	if d := at(0, 0); d == nil {
+		t.Fatal("the whole 300-line file must still be denied at 80%")
+	}
+	if d := at(0, 150); d == nil {
+		t.Fatal("a 150-line limit must still be denied at 80%")
+	}
+}
+
 // Fail-open diagnostics belong on stderr. Returned here they become
 // additionalContext on every passing tool call — the context-budget rule
 // spending context to say it is not working.

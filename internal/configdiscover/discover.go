@@ -34,6 +34,40 @@ type Result struct {
 var localeRE = regexp.MustCompile(`(^|[/.])([a-z]{2}(?:-[A-Z]{2})?)(\.json$|/)`)
 var generatedPath = regexp.MustCompile(`(?i)(generated|__generated__|\.gen\.|openapi|schema|\.lock$|\.min\.)`)
 
+// ignoreMatches applies .prettierignore / .biomeignore entries with gitignore
+// semantics rather than MatchNoRead's anchored-glob contract: a pattern with no
+// slash matches that component at ANY depth, a trailing slash matches a
+// directory and everything under it, and a later `!` negation wins. Handing
+// these straight to MatchNoRead meant the most common entries of all — `dist/`,
+// `generated`, `node_modules` — quietly matched nothing.
+func ignoreMatches(patterns []string, name string) bool {
+	ignored := false
+	for _, raw := range patterns {
+		pattern, negate := raw, false
+		if strings.HasPrefix(pattern, "!") {
+			pattern, negate = pattern[1:], true
+		}
+		dirOnly := strings.HasSuffix(pattern, "/")
+		// A slash anywhere but the end anchors the pattern to the repo root —
+		// including a LEADING one, so decide before trimming it off.
+		anchored := strings.Contains(strings.TrimSuffix(pattern, "/"), "/")
+		if pattern = strings.Trim(pattern, "/"); pattern == "" {
+			continue
+		}
+		if !anchored {
+			pattern = "**/" + pattern // matches that component at any depth
+		}
+		match := claudeguards.MatchNoRead(pattern+"/**", name) // as a directory
+		if !dirOnly {
+			match = match || claudeguards.MatchNoRead(pattern, name)
+		}
+		if match {
+			ignored = !negate // gitignore is last-match-wins
+		}
+	}
+	return ignored
+}
+
 // isAPISpec reports whether a path is an emitted API description, as opposed to
 // the hand-written code that emits one. The distinction matters: the no-read
 // denial tells the reader to "read the source that generates it", so proposing
@@ -171,11 +205,8 @@ func Discover(root string) (Result, error) {
 		if generated[name] {
 			reasons = append(reasons, "linguist-generated")
 		}
-		for _, pattern := range ignores {
-			if claudeguards.MatchNoRead(strings.TrimPrefix(pattern, "/"), name) {
-				reasons = append(reasons, "formatter ignore")
-				break
-			}
+		if ignoreMatches(ignores, name) {
+			reasons = append(reasons, "formatter ignore")
 		}
 		if len(reasons) > 0 {
 			r.Candidates = append(r.Candidates, Candidate{Path: name, Reasons: reasons})

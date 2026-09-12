@@ -155,20 +155,33 @@ func guardBudget(in *HookInput) *Denial {
 	}
 	over := false
 	if in.ToolInput.FilePath != "" && !noLineBudget[strings.ToLower(filepath.Ext(in.ToolInput.FilePath))] {
-		if in.ToolInput.Limit > 100 {
-			over = true
-		} else if in.ToolInput.Limit <= 0 {
-			n, ok := lineCount(resolvePath(in.ToolInput.FilePath, in.CWD))
-			over = ok && n > 100
+		// What a Read actually delivers is bounded by BOTH the limit and what
+		// is left after the offset. Reading a 300-line file from offset 250
+		// yields 50 lines, whatever the limit says.
+		n, measured := lineCount(resolvePath(in.ToolInput.FilePath, in.CWD))
+		remaining := max(0, n-max(0, in.ToolInput.Offset))
+		switch {
+		case in.ToolInput.Limit > 0:
+			printed := in.ToolInput.Limit
+			if measured && remaining < printed {
+				printed = remaining
+			}
+			over = printed > 100
+		case measured:
+			over = remaining > 100
 		}
 	}
-	for _, seg := range dumpSegments(in.ToolInput.Command) {
-		if seg.consumed {
-			continue
-		}
-		verdict, _, _, _ := dumpBudgetWithLimit(seg.text, in.CWD, 100)
-		if verdict == dumpOverBudget {
-			over = true
+	segments := dumpSegments(in.ToolInput.Command)
+	if len(segments) > 0 {
+		cfg := guardConfig(in.CWD) // once per hook call, not once per segment
+		for _, seg := range segments {
+			if seg.consumed {
+				continue
+			}
+			verdict, _, _, _ := dumpBudgetWithLimit(seg.text, in.CWD, cfg, 100)
+			if verdict == dumpOverBudget {
+				over = true
+			}
 		}
 	}
 	if over {

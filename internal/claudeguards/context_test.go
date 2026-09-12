@@ -199,4 +199,16 @@ func TestPipeExemptionNeedsAReducingSink(t *testing.T) {
 	if d := contextBashMatch("cat "+big+" | cat", root); d == nil || d.Rule != "context:whole-file-dump" {
 		t.Fatalf("| cat reproduces the file whole and must be denied, got %v", d)
 	}
+	// None of these bound anything — `sort` and `sed -n p` reproduce every
+	// input line, and an interpreter can do whatever it likes.
+	for _, sink := range []string{"sort", "uniq", "awk '{print}'", "sed -n p", "tee /tmp/x", "python3 -", "xargs -I{} echo {}"} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d == nil {
+			t.Fatalf("| %s does not bound its input and must not exempt the read", sink)
+		}
+	}
+	for _, sink := range []string{"head -20", "tail -5", "wc -l", "grep needle", "jq ."} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d != nil {
+			t.Fatalf("| %s bounds or queries and must stay allowed, got %v", sink, d)
+		}
+	}
 }

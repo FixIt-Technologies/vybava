@@ -119,6 +119,65 @@ func TestWriteAbsentPreservesSections(t *testing.T) {
 	}
 }
 
+// .prettierignore / .biomeignore are gitignore-style. Matched as anchored
+// globs, the commonest entries of all matched nothing at all.
+func TestIgnoreMatchesUsesGitignoreSemantics(t *testing.T) {
+	patterns := []string{"dist/", "generated", "*.min.js", "/root-only.txt", "vendor/", "!vendor/keep.ts"}
+	for name, want := range map[string]bool{
+		"dist/app.js":             true,  // trailing slash: the directory and everything under it
+		"apps/web/dist/chunk.js":  true,  // ... at any depth
+		"packages/generated/a.ts": true,  // no slash: a component anywhere
+		"generated":               true,  // ... including as a file itself
+		"a/b/c.min.js":            true,  // basename glob at depth
+		"root-only.txt":           true,  // leading slash: anchored
+		"nested/root-only.txt":    false, // ... so not at depth
+		"vendor/lib.ts":           true,
+		"vendor/keep.ts":          false, // a later negation wins
+		"apps/web/src/index.ts":   false,
+		"distribution/notes.md":   false, // "dist/" must not match a prefix
+	} {
+		if got := ignoreMatches(patterns, name); got != want {
+			t.Fatalf("%s: got %v, want %v", name, got, want)
+		}
+	}
+}
+
+// vconfig.Find stats rather than lstats, so a symlinked config reads fine —
+// and a plain rename would replace the link with a regular file.
+func TestWriteAbsentWritesThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	real := filepath.Join(t.TempDir(), "real-config.json")
+	if err := os.WriteFile(real, []byte(`{"guards":{"maxDumpLines":70}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, vconfig.FileJSON)
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := vconfig.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Result{Lok: lok.Config{Catalogs: map[string]lok.CatalogConfig{}}}
+	if _, err := r.WriteAbsent(cfg); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Lstat(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced by a regular file")
+	}
+	raw, err := os.ReadFile(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"lok"`) {
+		t.Fatalf("the link target was not updated: %s", raw)
+	}
+}
+
 // "openapi." as a basename substring also matches export-openapi.ts, because
 // the extension supplies the dot — so discovery proposed forbidding the very
 // source its own denial message tells you to read instead.
