@@ -119,9 +119,9 @@ func stopBrowser(session string) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return &daemonRefusal{fmt.Sprintf("HTTP %d %s", resp.StatusCode, rpcErrorMessage(raw))}
+		return &daemonRefusal{strings.TrimSpace(fmt.Sprintf("HTTP %d %s", resp.StatusCode, daemonErrorMessage(raw)))}
 	}
-	if msg := rpcErrorMessage(raw); msg != "" {
+	if msg := daemonErrorMessage(raw); msg != "" {
 		return &daemonRefusal{msg}
 	}
 	return nil
@@ -134,20 +134,44 @@ type daemonRefusal struct{ detail string }
 
 func (e *daemonRefusal) Error() string { return e.detail }
 
-// rpcErrorMessage pulls the JSON-RPC error out of a response body, "" when the
-// body carries none (or is not JSON at all — an unparseable body is not an
-// error we can name, and nothing here retries).
-func rpcErrorMessage(raw []byte) string {
+// daemonErrorMessage pulls the failure out of a response body, "" when the body
+// carries none (or is not JSON at all — an unparseable body is not an error we
+// can name, and nothing here retries).
+//
+// Two shapes, because the daemon reports a refused CALL and a failed TOOL
+// differently: a JSON-RPC error member only for the former, and for the latter
+// HTTP 200 with result.isError and the reason in result.content — a bad
+// argument to browser_stop answers 200 with isError true and no error member at
+// all. Reading only the error member would call every tool-level failure a
+// successful stop.
+func daemonErrorMessage(raw []byte) string {
 	var envelope struct {
 		Error *struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
 		} `json:"error"`
+		Result struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
 	}
-	if err := json.Unmarshal(raw, &envelope); err != nil || envelope.Error == nil {
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		return ""
 	}
-	return fmt.Sprintf("%s (code %d)", envelope.Error.Message, envelope.Error.Code)
+	if envelope.Error != nil {
+		return fmt.Sprintf("%s (code %d)", envelope.Error.Message, envelope.Error.Code)
+	}
+	if !envelope.Result.IsError {
+		return ""
+	}
+	for _, c := range envelope.Result.Content {
+		if text := strings.TrimSpace(c.Text); text != "" {
+			return text
+		}
+	}
+	return "the tool call failed without a message"
 }
 
 // BrowserTeardown is the SessionEnd hook entry point: stop the ending session's
@@ -158,6 +182,15 @@ func rpcErrorMessage(raw []byte) string {
 func BrowserTeardown(in *HookInput, stderr io.Writer) {
 	session := teardownSessionID(in)
 	if session == "" {
+		return
+	}
+	// Ask before telling. browser_stop answers {"stopped":true} for a session
+	// that never had a browser, so a line printed on every 200 would announce a
+	// stop that did not happen at every session end on a Mac with onyx — and
+	// most session ends never opened a browser at all. The PreToolUse guard's
+	// own lookup answers this; only a clear "no browser" ends it here, anything
+	// less certain still tries the stop.
+	if running, known := browserState(session); known && !running {
 		return
 	}
 	if err := stopBrowser(session); err != nil {

@@ -66,6 +66,28 @@ func TestBrowserAllowsWhenOnyxBrowserIsRunning(t *testing.T) {
 	}
 }
 
+// $ONYX_MCP_HTTP_PORT is environment, and it lands in the URL's authority: a
+// value that is not a port would move a bearer-token POST to a host of the
+// environment's choosing. Only a port is honoured; everything else is 3212.
+func TestOnyxHTTPBaseHonoursOnlyAPortNumber(t *testing.T) {
+	cases := map[string]string{
+		"":                      "http://127.0.0.1:3212",
+		"49152":                 "http://127.0.0.1:49152",
+		"evil.example.com@1":    "http://127.0.0.1:3212",
+		"1 evil.example.com":    "http://127.0.0.1:3212",
+		"0":                     "http://127.0.0.1:3212",
+		"70000":                 "http://127.0.0.1:3212",
+		"3212/../evil":          "http://127.0.0.1:3212",
+		"3212@evil.example.com": "http://127.0.0.1:3212",
+	}
+	for port, want := range cases {
+		t.Setenv("ONYX_MCP_HTTP_PORT", port)
+		if got := onyxHTTPBase(); got != want {
+			t.Errorf("onyxHTTPBase() with port %q = %q, want %q", port, got, want)
+		}
+	}
+}
+
 // Fail-open cases: the guard must never brick a session where onyx is absent.
 func TestBrowserFailsOpenWithoutSessionTokenOrServer(t *testing.T) {
 	calls := fakeOnyx(t, http.StatusNotFound)

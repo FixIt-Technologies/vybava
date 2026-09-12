@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -61,10 +62,15 @@ func onyxTokenFile() string {
 // onyxHTTPBase is the loopback origin of the resident onyx-mcp daemon. The port
 // is the one knob the installer moves, so tests point at an httptest server the
 // same way an operator points at a second port.
+//
+// Only a plain port number survives. The value lands in the URL's authority, so
+// one carrying an "@" ("evil.example.com@1") would move a bearer-token POST off
+// loopback to a host the environment names — and the answer is printed to
+// stderr. Anything that is not a port is not a knob, it is a splice.
 func onyxHTTPBase() string {
-	port := strings.TrimSpace(os.Getenv("ONYX_MCP_HTTP_PORT"))
-	if port == "" {
-		port = defaultOnyxHTTPPort
+	port := defaultOnyxHTTPPort
+	if n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("ONYX_MCP_HTTP_PORT"))); err == nil && n > 0 && n <= 65535 {
+		port = strconv.Itoa(n)
 	}
 	return "http://127.0.0.1:" + port
 }

@@ -107,15 +107,18 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 		Short: "Stop this session's Onyx browser at session end (SessionEnd; stdin: hook JSON)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			// Fail open on a malformed payload the same way the PreToolUse
-			// hooks do, but keep going: the environment still names the
-			// session whose browser must stop.
-			in, err := claudeguards.ReadInput(rt.stdin)
-			if err != nil {
-				in = &claudeguards.HookInput{}
-			}
+			// --session is the hand-run form, typed at a terminal that never
+			// sends EOF, so the flag is consulted BEFORE stdin: reading first
+			// would make the documented invocation hang on a read nothing ever
+			// ends. Without it, a payload comes from the hook — and a malformed
+			// one fails open the same way the PreToolUse hooks do, but keeps
+			// going, because the environment still names the session whose
+			// browser must stop.
+			in := &claudeguards.HookInput{}
 			if s := strings.TrimSpace(session); s != "" {
 				in.SessionID = s
+			} else if payload, err := claudeguards.ReadInput(rt.stdin); err == nil {
+				in = payload
 			}
 			claudeguards.BrowserTeardown(in, rt.stderr)
 			return nil
