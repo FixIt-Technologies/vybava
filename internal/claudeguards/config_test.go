@@ -3,6 +3,7 @@ package claudeguards
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,9 +58,6 @@ func TestUnboundedOutput(t *testing.T) {
 		{"git log", "git log --max-count=10"},
 		{"git diff", "git diff --stat"},
 		{"git show HEAD", "git show HEAD -- file.go"},
-		{"bun test", "bun test file.test.ts"},
-		{"go test ./...", "go test ./... -run TestBudget"},
-		{"bunx jest", "bunx jest > /tmp/jest.log"},
 	} {
 		t.Run(tc.deny, func(t *testing.T) {
 			if d := contextBashMatch(tc.deny, t.TempDir()); d == nil || d.Rule != "context:unbounded-output" {
@@ -69,5 +67,18 @@ func TestUnboundedOutput(t *testing.T) {
 				t.Fatalf("allow: %v", d)
 			}
 		})
+	}
+	// Test runners stay out of this rule: every repo here documents a bare
+	// suite run as its verify step, and a guard that refuses the documented
+	// command only teaches people to route around the guard.
+	for _, cmd := range []string{"go test ./...", "bun test", "bunx jest", "go test ./... && go vet ./..."} {
+		if d := contextBashMatch(cmd, t.TempDir()); d != nil {
+			t.Fatalf("%s: %v", cmd, d)
+		}
+	}
+	// A suggestion that drops the revisions the caller typed is a different
+	// command from the one they wanted.
+	if d := contextBashMatch("git show HEAD~3", t.TempDir()); d == nil || !strings.Contains(d.Message, "HEAD~3") {
+		t.Fatalf("fix must keep the caller's arguments: %v", d)
 	}
 }

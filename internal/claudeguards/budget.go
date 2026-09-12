@@ -89,28 +89,58 @@ func modelWindow(model string) int {
 	}
 }
 
-// BudgetContext returns model-visible context. A marker prevents repeated 50%
-// reminders; failure to create it stays observable, without blocking tools.
+// budgetDiag reports a fail-open condition to the operator. It deliberately
+// does NOT travel back as additionalContext: that string enters the model's
+// context on every passing tool call, and a context-budget rule narrating its
+// own failure hundreds of times is the exact cost this file exists to prevent.
+func budgetDiag(msg string) { fmt.Fprintln(os.Stderr, "claude-guards: "+msg) }
+
+// budgetMarkers are the once-per-session reminder markers, in preference
+// order. The transcript's own directory is first; a temp-dir marker keyed by
+// session is the fallback, because without any marker the reminder repeats on
+// every single tool call.
+func budgetMarkers(in *HookInput) []string {
+	markers := []string{in.TranscriptPath + ".budget-50"}
+	if in.SessionID != "" {
+		markers = append(markers, filepath.Join(os.TempDir(), "claude-guards-budget-50-"+filepath.Base(in.SessionID)))
+	}
+	return markers
+}
+
+// BudgetContext returns model-visible context: the one 50% reminder per
+// session, and nothing else. Every fail-open path returns "" and reports on
+// stderr instead.
 func BudgetContext(in *HookInput) string {
 	if in.TranscriptPath == "" {
-		return "claude-guards: context budget unavailable (missing transcript_path); budget rules fail open."
+		budgetDiag("context budget unavailable (missing transcript_path); budget rules fail open")
+		return ""
 	}
 	b, err := ReadBudget(in.TranscriptPath)
 	if err != nil {
-		return "claude-guards: context budget unavailable; budget rules fail open: " + err.Error()
+		budgetDiag("context budget unavailable; budget rules fail open: " + err.Error())
+		return ""
 	}
 	if b.Percent() < 50 {
 		return ""
 	}
-	f, err := os.OpenFile(in.TranscriptPath+".budget-50", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if errors.Is(err, os.ErrExist) {
-		return ""
+	claimed := false
+	for _, marker := range budgetMarkers(in) {
+		f, err := os.OpenFile(marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			return "" // already reminded this session
+		}
+		if err != nil {
+			budgetDiag("cannot record context reminder at " + marker + ": " + err.Error())
+			continue
+		}
+		if err := f.Close(); err != nil {
+			budgetDiag("cannot close context reminder: " + err.Error())
+		}
+		claimed = true
+		break
 	}
-	if err != nil {
-		return "claude-guards: cannot record context reminder: " + err.Error()
-	}
-	if err := f.Close(); err != nil {
-		return "claude-guards: cannot close context reminder: " + err.Error()
+	if !claimed {
+		budgetDiag("context reminder could not be recorded anywhere; it may repeat")
 	}
 	return fmt.Sprintf("Context at %d%% (%d/%d tokens). Compact (/compact) or hand off (/handoff) before prolonged work. At 70%%, text reads above 100 lines are denied; screenshot reads remain available.", b.Percent(), b.Tokens, b.Window)
 }

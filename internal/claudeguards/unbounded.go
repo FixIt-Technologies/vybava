@@ -74,27 +74,19 @@ func unboundedOutput(segment string, cfg Config) *Denial {
 			}
 		}
 		if !has("--stat", "--name-only", "--name-status", "--numstat", "--shortstat") && !pathBound {
-			fix = command + " --stat (or -- <path>)"
+			// Keep the revisions the caller typed; a suggestion that drops them
+			// is a different command from the one they wanted.
+			fix = strings.Join(f, " ") + " --stat (or -- <path>)"
 		}
-	case "bun test", "bunx jest", "go test":
-		filtered := has("-run", "-test.run", "-t", "--testNamePattern", "--testPathPattern", "--testPathPatterns")
-		for i := 2; i < len(f); i++ {
-			a := f[i]
-			// Values of runner flags are not positional test filters.
-			if a == "-count" || a == "-timeout" || a == "-parallel" || a == "-p" || a == "--timeout" || a == "--maxWorkers" || a == "--reporter" || a == "--config" {
-				i++
-				continue
-			}
-			if !strings.HasPrefix(a, "-") && a != "./..." {
-				filtered = true
-			}
-		}
-		if !filtered {
-			fix = command + " > /tmp/test.log 2>&1; tail -100 /tmp/test.log"
-		}
+	// Test runners are deliberately absent: a passing suite prints a few lines,
+	// a failing one puts the part worth reading at the end, and every repo here
+	// documents a bare `go test ./...` / `bun test` as its verification step.
+	// A guard that refuses the documented verify command only teaches people to
+	// route around the guard. Add one through guards.unboundedCommands if a
+	// specific suite really does flood.
 	default:
 		if cfg.UnboundedCommands != nil {
-			fix = command + " | tail -100"
+			fix = strings.Join(f, " ") + " | tail -100"
 		}
 	}
 	if fix == "" {

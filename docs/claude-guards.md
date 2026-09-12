@@ -60,7 +60,10 @@ claude-guards check read apps/client/locales/cs.json --json
 The hook tails at most 4 MiB of `transcript_path` and uses the latest assistant
 input + cache-creation + cache-read usage, not cumulative billed tokens.
 Recognized Fable/Opus/Sonnet 5 models have a 1M window; Haiku has 200k.
-Unknown models or unavailable usage fail open with an explicit notice.
+Unknown models or unavailable usage fail open, reporting why on stderr. That
+notice deliberately never travels back as `additionalContext`: it would enter
+the model's context on every passing tool call, which is the cost these rules
+exist to prevent.
 
 At 50%, a private `<transcript>.budget-50` marker makes a model-visible reminder
 once per transcript. The hook emits `hookSpecificOutput.additionalContext` on
@@ -71,15 +74,24 @@ apply. `CLAUDE_ALLOW_CONTEXT_DUMP=1` is the explicit escape hatch (an inherited
 environment variable for Read, a leading assignment for Bash).
 
 `context:unbounded-output` requests caps for `docker logs`, GitHub run logs,
-`git log`, unspecialized `git diff/show`, and broad Bun/Go/Jest test runs.
-Examples: `docker logs --tail 200 app`, `git log -n 20`, `git diff --stat`,
-or redirect test output to a file and inspect its tail. Pipes and redirects
-retain the existing exemption. This is a command-shape guard, not a shell
-interpreter or a guaranteed byte limit for arbitrary commands.
+`git log` and unspecialized `git diff/show`. Examples: `docker logs --tail 200
+app`, `git log -n 20`, `git diff --stat`. The suggested form keeps the
+arguments you typed. Test runners are deliberately not covered: a passing suite
+prints little, a failing one puts what matters at the end, and every repo here
+documents a bare `go test ./...` / `bun test` as its verify step — a guard that
+refuses the documented command only teaches people to route around it. List one
+under `guards.unboundedCommands` if a specific suite really does flood. This is
+a command-shape guard, not a shell interpreter or a guaranteed byte limit.
 
-`guards.noRead` denies raw reads of generated paths, including short ranges;
-use `rg` or inspect their generating source. `guards.maxDumpLines` replaces
-the normal 200-line allowance. See [config](config.md) for discovery.
+A pipe exempts a read only when the downstream command shrinks its input
+(`| grep`, `| head`, `| jq`, `| wc`). `| cat`, `| tee` and `| less` reproduce
+the file whole, so they are treated as the dump they are. Redirects to a file
+remain exempt.
+
+`guards.noRead` denies raw reads of generated paths, including short ranges and
+non-reducing pipes; use `rg` or inspect their generating source.
+`guards.maxDumpLines` replaces the normal 200-line allowance. See
+[config](config.md) for discovery.
 
 ```text
 claude-guards ctx latest
@@ -87,10 +99,14 @@ claude-guards ctx f9ee8c4e --json
 ```
 
 `ctx` resolves a unique session filename prefix and reads it without modifying
-it. The report includes recorded output/thinking usage, peak context, per-hour
-growth, per-tool text estimates, top 15 results, image dimensions and estimates,
-and recorded SessionStart todo hooks. Missing/malformed records are counted;
-unknown image dimensions are explicit. Character-based text estimates and PNG
-pixel estimates (long edge capped at 1568, area / 750) are approximate. Output
-tokens include thinking; do not add thinking again. Saved transcripts may not
-retain every resume's hook event, so hook counts describe recorded evidence.
+it. `latest` considers sessions only — subagent and workflow transcripts are
+skipped, or it would report another agent's context as yours. The report
+includes recorded output/thinking usage, peak context, per-hour growth,
+per-tool text estimates, top 15 results, image dimensions and estimates, and
+recorded SessionStart todo hooks. Missing/malformed records are counted;
+unknown image dimensions are explicit. Character-based text estimates and pixel
+estimates (long edge capped at 1568, area / 750) are approximate. Dimensions are
+read from PNG, JPEG, GIF and WebP headers; a header we cannot read is charged
+the per-image maximum rather than zero, and counted as unknown. Output tokens
+include thinking; do not add thinking again. Saved transcripts may not retain
+every resume's hook event, so hook counts describe recorded evidence.

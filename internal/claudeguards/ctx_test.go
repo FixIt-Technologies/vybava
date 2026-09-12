@@ -34,3 +34,38 @@ func TestDiagnoseContext(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+// Only PNG headers were read, so every screenshot in another format was priced
+// at zero and the image total came out far below the truth.
+func TestImageCostByFormat(t *testing.T) {
+	gif := append([]byte("GIF89a"), 0x00, 0x05, 0x2c, 0x01) // 1280x300
+	jpeg := []byte{0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x03, 0x84, 0x05, 0x00, 0x00, 0x00}
+	for name, data := range map[string][]byte{"gif": gif, "jpeg": jpeg} {
+		got := imageCost(base64.StdEncoding.EncodeToString(data))
+		if got.Width != 1280 || got.EstimatedTokens == 0 {
+			t.Fatalf("%s: %+v", name, got)
+		}
+	}
+	if got := imageCost(base64.StdEncoding.EncodeToString([]byte("not an image at all"))); got.EstimatedTokens != unknownImageTokens {
+		t.Fatalf("an unreadable header must not cost zero: %+v", got)
+	}
+}
+
+// `latest` walked into subagent transcripts, reporting another agent's few
+// hundred tokens as this session's context.
+func TestResolveTranscriptSkipsSubagents(t *testing.T) {
+	root := t.TempDir()
+	session := filepath.Join(root, "slug", "abc.jsonl")
+	subagent := filepath.Join(root, "slug", "abc", "subagents", "agent-1.jsonl")
+	for _, p := range []string{session, subagent} { // subagent is written last, so it is newest
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("{}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := ResolveTranscript(root, "latest"); err != nil || got != session {
+		t.Fatalf("latest = %q (%v), want the session transcript", got, err)
+	}
+}

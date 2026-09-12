@@ -163,3 +163,40 @@ func TestLokCatalogRule(t *testing.T) {
 		t.Fatalf("escape hatch, got %v", d)
 	}
 }
+
+// Files past the 4 MiB read cap report a sentinel line count. A sentinel near
+// maxInt summed to a negative total once three of them appeared on one command
+// line, so the guard allowed exactly the dump it exists to stop.
+func TestDumpBudgetSumsUnmeasuredFilesWithoutWrapping(t *testing.T) {
+	root := t.TempDir()
+	var paths []string
+	for _, name := range []string{"a.log", "b.log", "c.log"} {
+		p := filepath.Join(root, name)
+		if err := os.WriteFile(p, []byte(strings.Repeat("x\n", 2<<20)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	d := contextBashMatch("cat "+strings.Join(paths, " "), root)
+	if d == nil || d.Rule != "context:whole-file-dump" {
+		t.Fatalf("three unmeasured files must stay denied, got %v", d)
+	}
+	if strings.Contains(d.Message, "4611686018427387903") {
+		t.Fatalf("sentinel leaked into the message: %s", d.Message)
+	}
+}
+
+// A pipe is only an exemption when the downstream command shrinks its input.
+func TestPipeExemptionNeedsAReducingSink(t *testing.T) {
+	root := t.TempDir()
+	big := filepath.Join(root, "big.txt")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x\n", 500)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if d := contextBashMatch("cat "+big+" | jq .", root); d != nil {
+		t.Fatalf("a reducing sink stays allowed, got %v", d)
+	}
+	if d := contextBashMatch("cat "+big+" | cat", root); d == nil || d.Rule != "context:whole-file-dump" {
+		t.Fatalf("| cat reproduces the file whole and must be denied, got %v", d)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,7 +28,12 @@ func TestDiscoverAndDrift(t *testing.T) {
 		"apps/web/i18n/strings.cs.json": `{"Save":"Uložit"}`,
 		"apps/web/i18n/strings.uk.json": `{"Save":"Зберегти"}`,
 		"apps/api/openapi.json":         "{}",
-		"vybava.config.json":            `{"guards":{"noRead":["apps/api/openapi.json"]},"lok":{"catalogs":{"mobile":{"style":"english-as-key","files":"apps/client/locales/{locale}.json","locales":["en","cs"]},"webStrings":{"style":"path","files":"apps/web/i18n/strings.{locale}.json","locales":["cs","uk"]}}}}`,
+		// Both sit on a "strong" path, and both used to be proposed: a binary
+		// nobody reads as lines, and the hand-written source the no-read
+		// denial tells you to read instead.
+		"packages/generated/report.pdf":     "%PDF-1.4\n\x00\x00binary payload",
+		"scripts/openapi/export-openapi.ts": "export const run = () => {}\n",
+		"vybava.config.json":                `{"guards":{"noRead":["apps/api/openapi.json"]},"lok":{"catalogs":{"mobile":{"style":"english-as-key","files":"apps/client/locales/{locale}.json","locales":["en","cs"]},"webStrings":{"style":"path","files":"apps/web/i18n/strings.{locale}.json","locales":["cs","uk"]}}}}`,
 	}
 	for p, raw := range files {
 		p = filepath.Join(root, p)
@@ -45,6 +51,11 @@ func TestDiscoverAndDrift(t *testing.T) {
 	}
 	if c := r.Lok.Catalogs["mobile"]; c.Style != lok.StyleEnglishAsKey || len(c.Plurals) != 1 {
 		t.Fatalf("mobile: %+v", c)
+	}
+	for _, unwanted := range []string{"packages/generated/report.pdf", "scripts/openapi/export-openapi.ts"} {
+		if slices.Contains(r.Guards.NoRead, unwanted) {
+			t.Fatalf("%s must not be proposed: %v", unwanted, r.Guards.NoRead)
+		}
 	}
 	cfg, err := vconfig.Load(root)
 	if err != nil {
@@ -105,5 +116,23 @@ func TestWriteAbsentPreservesSections(t *testing.T) {
 	}
 	if written, err = r.WriteAbsent(cfg); err != nil || len(written) != 0 {
 		t.Fatal(written, err)
+	}
+}
+
+// "openapi." as a basename substring also matches export-openapi.ts, because
+// the extension supplies the dot — so discovery proposed forbidding the very
+// source its own denial message tells you to read instead.
+func TestIsAPISpecMatchesSpecsNotGenerators(t *testing.T) {
+	for path, want := range map[string]bool{
+		"apps/api/openapi.json":                  true,
+		"docs/openapi.yaml":                      true,
+		"packages/contract/swagger.yml":          true,
+		"apps/api/src/openapi/export-openapi.ts": false,
+		"scripts/openapi/export-openapi.mjs":     false,
+		"internal/importers/openapi.go":          false,
+	} {
+		if got := isAPISpec(path); got != want {
+			t.Fatalf("%s: got %v, want %v", path, got, want)
+		}
 	}
 }

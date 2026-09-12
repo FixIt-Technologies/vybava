@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -98,6 +99,12 @@ func ResolveTranscript(root, selector string) (string, error) {
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		// Subagent and workflow transcripts are not sessions. Walking into them
+		// makes `latest` resolve to whichever agent happened to write last —
+		// a few hundred tokens of someone else's context, reported as yours.
+		if d.IsDir() && (d.Name() == "subagents" || d.Name() == "workflows") {
+			return fs.SkipDir
 		}
 		if !d.IsDir() && strings.HasSuffix(d.Name(), ".jsonl") && (selector == "latest" || strings.HasPrefix(d.Name(), selector)) {
 			matches = append(matches, p)
@@ -208,7 +215,7 @@ func DiagnoseContext(path string) (ContextReport, error) {
 							tokens := 0
 							for _, p := range parts {
 								if p.Type == "image" {
-									img := pngCost(p.Source.Data)
+									img := imageCost(p.Source.Data)
 									img.Tool = name
 									r.Images = append(r.Images, img)
 									cost.Images++
@@ -266,17 +273,92 @@ func contentBlocks(raw json.RawMessage) ([]transcriptBlock, error) {
 
 func estimateTokens(s string) int { return int(math.Round(float64(len([]rune(s))) / 3.6)) }
 
-func pngCost(data string) ImageCost {
-	if len(data) > 64 {
-		data = data[:64]
+// unknownImageTokens is charged to an image whose header we cannot read: the
+// most any single image can cost once its long edge is scaled to 1568 px. It is
+// deliberately an upper bound — the report counts these separately as "unknown
+// dimensions" — because charging 0 understates the image total badly.
+const unknownImageTokens = 1568 * 1568 / 750
+
+// imageCost estimates one image block's token cost. Only PNG used to be read,
+// which silently priced every screenshot in another format at zero.
+func imageCost(data string) ImageCost {
+	head := data
+	if len(head) > 4096 {
+		head = head[:4096]
 	}
-	raw, err := base64.StdEncoding.DecodeString(data)
-	if err != nil || len(raw) < 24 || string(raw[:8]) != "\x89PNG\r\n\x1a\n" {
-		return ImageCost{}
+	raw, err := base64.StdEncoding.DecodeString(head[:len(head)/4*4])
+	if err != nil {
+		return ImageCost{EstimatedTokens: unknownImageTokens}
 	}
-	w, h := int(binary.BigEndian.Uint32(raw[16:20])), int(binary.BigEndian.Uint32(raw[20:24]))
+	w, h := imageDimensions(raw)
+	if w <= 0 || h <= 0 {
+		return ImageCost{EstimatedTokens: unknownImageTokens}
+	}
 	scale := math.Min(1, 1568/float64(max(w, h)))
 	return ImageCost{Width: w, Height: h, EstimatedTokens: int(math.Round(float64(w) * float64(h) * scale * scale / 750))}
+}
+
+// imageDimensions reads width and height out of a container header, or (0, 0)
+// for a format or truncation it cannot read.
+func imageDimensions(raw []byte) (int, int) {
+	switch {
+	case len(raw) >= 24 && string(raw[:8]) == "\x89PNG\r\n\x1a\n":
+		return int(binary.BigEndian.Uint32(raw[16:20])), int(binary.BigEndian.Uint32(raw[20:24]))
+	case len(raw) >= 10 && (string(raw[:6]) == "GIF87a" || string(raw[:6]) == "GIF89a"):
+		return int(binary.LittleEndian.Uint16(raw[6:8])), int(binary.LittleEndian.Uint16(raw[8:10]))
+	case len(raw) >= 16 && string(raw[:4]) == "RIFF" && string(raw[8:12]) == "WEBP":
+		return webpDimensions(raw)
+	case len(raw) >= 4 && raw[0] == 0xFF && raw[1] == 0xD8:
+		return jpegDimensions(raw)
+	}
+	return 0, 0
+}
+
+// jpegDimensions walks marker segments to the first start-of-frame.
+func jpegDimensions(raw []byte) (int, int) {
+	for i := 2; i+9 < len(raw); {
+		if raw[i] != 0xFF || raw[i+1] == 0xFF {
+			i++
+			continue
+		}
+		marker := raw[i+1]
+		if marker == 0xD8 || marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7) {
+			i += 2 // standalone markers carry no length
+			continue
+		}
+		// SOF0..SOF15, minus the huffman/arithmetic/extension markers sharing the range.
+		if marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC {
+			return int(binary.BigEndian.Uint16(raw[i+7 : i+9])), int(binary.BigEndian.Uint16(raw[i+5 : i+7]))
+		}
+		length := int(binary.BigEndian.Uint16(raw[i+2 : i+4]))
+		if length < 2 {
+			return 0, 0
+		}
+		i += 2 + length
+	}
+	return 0, 0
+}
+
+// webpDimensions reads whichever of the three WebP chunk headers is present.
+func webpDimensions(raw []byte) (int, int) {
+	switch string(raw[12:16]) {
+	case "VP8X":
+		if len(raw) >= 30 {
+			w := int(raw[24]) | int(raw[25])<<8 | int(raw[26])<<16
+			h := int(raw[27]) | int(raw[28])<<8 | int(raw[29])<<16
+			return w + 1, h + 1
+		}
+	case "VP8 ":
+		if len(raw) >= 30 {
+			return int(binary.LittleEndian.Uint16(raw[26:28]) & 0x3FFF), int(binary.LittleEndian.Uint16(raw[28:30]) & 0x3FFF)
+		}
+	case "VP8L":
+		if len(raw) >= 25 {
+			b := binary.LittleEndian.Uint32(raw[21:25])
+			return int(b&0x3FFF) + 1, int((b>>14)&0x3FFF) + 1
+		}
+	}
+	return 0, 0
 }
 
 func (r ContextReport) Render(w io.Writer) error {

@@ -69,3 +69,26 @@ func TestBudgetTiers(t *testing.T) {
 		t.Fatal("missing transcript must report unavailable")
 	}
 }
+
+// Fail-open diagnostics belong on stderr. Returned here they become
+// additionalContext on every passing tool call — the context-budget rule
+// spending context to say it is not working.
+func TestBudgetContextSilentWhenUnavailable(t *testing.T) {
+	root := t.TempDir()
+	unknownModel := filepath.Join(root, "unknown.jsonl")
+	row := `{"type":"assistant","message":{"model":"claude-sonnet-4-5-20250929","usage":{"input_tokens":900000}}}`
+	if err := os.WriteFile(unknownModel, []byte(row+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	empty := filepath.Join(root, "empty.jsonl")
+	if err := os.WriteFile(empty, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"", filepath.Join(root, "missing.jsonl"), unknownModel, empty} {
+		for range 3 {
+			if got := BudgetContext(&HookInput{TranscriptPath: path, SessionID: "s"}); got != "" {
+				t.Fatalf("%q: fail-open must stay out of the model's context, got %q", path, got)
+			}
+		}
+	}
+}

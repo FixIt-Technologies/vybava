@@ -111,6 +111,21 @@ func isTranscript(abs string) bool {
 	return transcriptRoot != "" && strings.HasPrefix(abs, transcriptRoot+"/") && strings.HasSuffix(abs, ".jsonl")
 }
 
+// unboundedLines marks a read whose length we refuse to measure precisely. It
+// sits far above any real budget, yet low enough that a whole command line of
+// them sums without overflowing int — a sentinel near maxInt wraps negative
+// once three are added and silently allows the dump it exists to stop.
+const unboundedLines = 1 << 30
+
+// linesLabel renders a line count for a human, naming the unmeasured case
+// instead of printing the sentinel.
+func linesLabel(n int) string {
+	if n >= unboundedLines {
+		return "4 MiB+"
+	}
+	return strconv.Itoa(n)
+}
+
 // lineCount counts newlines in a regular file; (0, false) when it is not one.
 // Reads at most 4 MiB — anything past that is over budget regardless.
 func lineCount(abs string) (int, bool) {
@@ -142,7 +157,7 @@ func lineCount(abs string) (int, bool) {
 		}
 	}
 	if total >= 4<<20 {
-		return int(^uint(0) >> 2), true
+		return unboundedLines, true
 	}
 	if total > 0 && last != '\n' {
 		n++
@@ -193,23 +208,55 @@ type dumpSegment struct {
 
 // dumpSegments splits like segments() but remembers when a segment's output
 // is consumed by a pipe. `cat f | grep x` never reaches context; `cat f` does.
-func dumpSegments(cmd string) []dumpSegment {
-	src := stripQuotedHeredocs(cmd)
-	var out []dumpSegment
-	pos := 0
-	for _, m := range segmentSplit.FindAllStringIndex(src, -1) {
-		out = appendDumpSegment(out, src[pos:m[0]], src[m[0]:m[1]] == "|")
-		pos = m[1]
-	}
-	return appendDumpSegment(out, src[pos:], false)
+// reducingSinks shrink what a pipe delivers, so a read feeding one never
+// reaches context whole. `cat`, `tee`, `less` and `more` reproduce their input
+// verbatim: piping into them is still a dump, and used to slip every read rule.
+var reducingSinks = map[string]bool{
+	"jq": true, "yq": true, "grep": true, "egrep": true, "fgrep": true, "rg": true,
+	"head": true, "tail": true, "wc": true, "awk": true, "sed": true, "cut": true,
+	"sort": true, "uniq": true, "column": true, "xargs": true, "python3": true, "node": true,
 }
 
-func appendDumpSegment(out []dumpSegment, raw string, piped bool) []dumpSegment {
-	s := strings.Trim(raw, " \t\r")
-	if s == "" {
-		return out
+// reducesOutput reports whether a pipe's downstream segment bounds its input.
+func reducesOutput(seg string) bool {
+	f := shellFields(strings.TrimLeft(seg, "( \t"))
+	for len(f) > 0 && strings.Contains(f[0], "=") {
+		f = f[1:]
 	}
-	return append(out, dumpSegment{text: s, consumed: piped || reFileRedirect.MatchString(s)})
+	return len(f) > 0 && reducingSinks[filepath.Base(f[0])]
+}
+
+func dumpSegments(cmd string) []dumpSegment {
+	src := stripQuotedHeredocs(cmd)
+	var texts []string
+	var piped []bool
+	pos := 0
+	for _, m := range segmentSplit.FindAllStringIndex(src, -1) {
+		texts = append(texts, src[pos:m[0]])
+		piped = append(piped, src[m[0]:m[1]] == "|")
+		pos = m[1]
+	}
+	texts, piped = append(texts, src[pos:]), append(piped, false)
+
+	var out []dumpSegment
+	for i, raw := range texts {
+		s := strings.Trim(raw, " \t\r")
+		if s == "" {
+			continue
+		}
+		consumed := reFileRedirect.MatchString(s)
+		if piped[i] {
+			// Find the sink: the next segment with any content.
+			for j := i + 1; j < len(texts); j++ {
+				if next := strings.Trim(texts[j], " \t\r"); next != "" {
+					consumed = consumed || reducesOutput(next)
+					break
+				}
+			}
+		}
+		out = append(out, dumpSegment{text: s, consumed: consumed})
+	}
+	return out
 }
 
 // dumpVerdict is what dumpBudget decided about one read segment.
@@ -310,6 +357,9 @@ func dumpBudgetWithLimit(seg, cwd string, budget int) (verdict dumpVerdict, file
 			printed = limit
 		}
 		total += printed
+		if total > unboundedLines {
+			total = unboundedLines // saturate: several unmeasured files must not wrap
+		}
 		if total > budget && file == "" {
 			file, lines = abs, n
 		}
@@ -330,7 +380,7 @@ func addSedRange(limit int, expr string) int {
 		}
 		switch {
 		case m[1] == "" || (strings.Contains(part, ",") && m[2] == ""):
-			return int(^uint(0) >> 2) // conservatively treat an open range as unbounded
+			return unboundedLines // conservatively treat an open range as unbounded
 		case m[2] == "":
 			limit++
 		default:
@@ -396,7 +446,7 @@ func contextBashMatch(cmd, cwd string) *Denial {
 		case dumpNoRead:
 			return noReadDenial(file)
 		case dumpOverBudget:
-			return deny("context:whole-file-dump", fmt.Sprintf(wholeFileMsg, total, cfg.MaxDumpLines, file, lines), contextReadEscape)
+			return deny("context:whole-file-dump", fmt.Sprintf(wholeFileMsg, linesLabel(total), cfg.MaxDumpLines, file, linesLabel(lines)), contextReadEscape)
 		}
 	}
 	return nil
@@ -437,7 +487,7 @@ func contextReadMatch(path string, limit int, cwd string) *Denial {
 	if !ok || n <= cfg.MaxDumpLines {
 		return nil
 	}
-	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, n, cfg.MaxDumpLines), "")
+	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, linesLabel(n), cfg.MaxDumpLines), "")
 }
 
 func guardContextBash(in *HookInput) *Denial { return contextBashMatch(in.ToolInput.Command, in.CWD) }
@@ -465,14 +515,15 @@ is next read — and the harness loses track of what changed. Use the Edit tool
 for each changed hunk instead. Appending (>>, tee -a) and /tmp targets are
 not affected.`
 
-const wholeFileMsg = `This read would put ~%d lines into context (budget: %d per call):
-  %s (%d lines)
+const wholeFileMsg = `This read would put ~%s lines into context (budget: %d per call):
+  %s (%s lines)
 
 Read only the range you will act on:  sed -n '120,180p' <file>   ·   rg -n '<symbol>' <file>
 Surveying many files? Delegate to an Explore agent and keep the conclusions,
-not the dumps. Piped reads (| grep, | head) are never blocked.`
+not the dumps. A pipe into something that shrinks the output (| grep, | head,
+| jq) is never blocked; | cat and | tee reproduce the file whole, so they are.`
 
-const readToolMsg = `%s has %d lines; a Read without offset/limit puts all of it into context
+const readToolMsg = `%s has %s lines; a Read without offset/limit puts all of it into context
 (budget: %d lines per call).
 
 Pass offset + limit for the range you need, locate it first with Grep, or send

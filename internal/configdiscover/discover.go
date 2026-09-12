@@ -34,6 +34,24 @@ type Result struct {
 var localeRE = regexp.MustCompile(`(^|[/.])([a-z]{2}(?:-[A-Z]{2})?)(\.json$|/)`)
 var generatedPath = regexp.MustCompile(`(?i)(generated|__generated__|\.gen\.|openapi|schema|\.lock$|\.min\.)`)
 
+// isAPISpec reports whether a path is an emitted API description, as opposed to
+// the hand-written code that emits one. The distinction matters: the no-read
+// denial tells the reader to "read the source that generates it", so proposing
+// export-openapi.ts — whose basename merely contains "openapi." because the
+// extension supplies the dot — would forbid exactly the file it points at.
+func isAPISpec(name string) bool {
+	base := filepath.Base(name)
+	ext := strings.ToLower(filepath.Ext(base))
+	if ext != ".json" && ext != ".yaml" && ext != ".yml" {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSuffix(base, filepath.Ext(base))) {
+	case "openapi", "swagger", "schema":
+		return true
+	}
+	return false
+}
+
 func Discover(root string) (Result, error) {
 	r := Result{Lok: lok.Config{Catalogs: map[string]lok.CatalogConfig{}}, Candidates: []Candidate{}, Warnings: []string{}}
 	r.Guards.NoRead = []string{}
@@ -125,6 +143,13 @@ func Discover(root string) (Result, error) {
 				return r, err
 			}
 		}
+		// A NUL byte anywhere means this is not text — PDFs keep an ASCII
+		// header, so a first-block sniff misses them. Counting newlines in a
+		// binary reports a meaningless "lines > 2000", and no read rule can
+		// help a file nobody reads as lines.
+		if len(raw) > 0 && bytes.IndexByte(raw, 0) >= 0 {
+			continue
+		}
 		reasons := []string{}
 		if st.Size() > 256<<10 {
 			reasons = append(reasons, "size > 256 KiB")
@@ -156,7 +181,7 @@ func Discover(root string) (Result, error) {
 			r.Candidates = append(r.Candidates, Candidate{Path: name, Reasons: reasons})
 			// A schema mention or a large source file is evidence to review,
 			// not sufficient reason to forbid reading its source.
-			strongPath := strings.Contains(name, "/generated/") || strings.Contains(name, "/__generated__/") || strings.Contains(name, ".gen.") || strings.HasSuffix(name, ".lock") || strings.Contains(name, ".min.") || strings.Contains(filepath.Base(name), "openapi.") || filepath.Base(name) == "translation-keys.d.ts"
+			strongPath := strings.Contains(name, "/generated/") || strings.Contains(name, "/__generated__/") || strings.Contains(name, ".gen.") || strings.HasSuffix(name, ".lock") || strings.Contains(name, ".min.") || isAPISpec(name) || filepath.Base(name) == "translation-keys.d.ts"
 			if strongPath || generated[name] || (st.Size() > 256<<10 && generatedPath.MatchString(name)) {
 				r.Guards.NoRead = append(r.Guards.NoRead, name)
 			}
