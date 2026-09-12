@@ -13,6 +13,12 @@ items:
     description: Locale catalogs for AI sessions — never read whole. Configured in vybava.config.ts (lok.catalogs), queried by key (get, grep, missing), written by verb with every locale kept in sync (add, set, rm), extracted from source (scan), gated in CI (check).
     applet: lok
 
+  - id: posta
+    kind: applet
+    status: experimental
+    description: Drive a shared test mailbox end to end — mint a per-run plus-address, wait for the message a journey triggered, take its links and attachments, send and purge; the app password is injected from the vault and never printed.
+    applet: posta
+
   - id: envbridge
     kind: applet
     status: experimental
@@ -72,6 +78,12 @@ items:
     status: experimental
     description: Explain where the Codex plan limit went — per-thread spend from ~/.codex rollouts, the derived allowance, and the runway left at the measured burn rate.
     applet: codexusage
+
+  - id: repolicy
+    kind: applet
+    status: experimental
+    description: Hold GitHub repository settings to a declared policy across whole owners — GitHub inherits no organization default, so audit reports the drift (exit 1) and apply converges it, touching only the settings the policy names.
+    applet: repolicy
 
   - id: reconcile
     kind: applet
@@ -175,8 +187,10 @@ groups:
       - lok
       - claude-guards
       - envbridge
+      - posta
       - codexsync
       - codexusage
+      - repolicy
       - hotfix
       - hotfix-lane
       - reclaim
@@ -219,6 +233,13 @@ groups:
       - lok
       - claude-guards
       - envbridge
+      - posta
+      - codexsync
+      - codexusage
+      - repolicy
+      - hotfix
+      - hotfix-lane
+      - operator
       - memorylint
       - fontfreeze
       - perfrig

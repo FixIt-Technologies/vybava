@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/henderson-tech/vybava/internal/claudeguards"
 	"github.com/henderson-tech/vybava/internal/runx"
@@ -31,7 +32,9 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 		Long: "claude-guards enforces the hard bans of ~/.claude/CLAUDE.md at the tool boundary,\n" +
 			"including under bypass permissions and inside subagents. Wire it in settings.json:\n" +
 			"  PreToolUse Bash → claude-guards bash · PreToolUse Read → claude-guards read\n" +
-			"  SessionStart → claude-guards swarm-teardown --dead-only · SessionEnd → claude-guards swarm-teardown\n" +
+			"  PreToolUse mcp__playwright__.*|mcp__plugin_chrome-devtools-mcp_chrome-devtools__.* → claude-guards browser\n" +
+			"  SessionStart → claude-guards swarm-teardown --dead-only\n" +
+			"  SessionEnd → claude-guards swarm-teardown · claude-guards browser-teardown\n" +
 			"A block prints its reason and the sanctioned alternative on stderr and exits 2.",
 	}
 	hook := func(name, short string, decide func(*claudeguards.HookInput) *claudeguards.Denial) *cobra.Command {
@@ -62,6 +65,7 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 	}
 	root.AddCommand(hook("bash", "PreToolUse:Bash — every command rule (stdin: hook JSON)", claudeguards.Bash))
 	root.AddCommand(hook("read", "PreToolUse:Read — raw .e2e PNGs, transcripts, over-budget reads (stdin: hook JSON)", claudeguards.Read))
+	root.AddCommand(hook("browser", "PreToolUse:mcp__playwright__*|mcp__plugin_chrome-devtools-mcp_chrome-devtools__* — this session's Onyx browser must be running (stdin: hook JSON)", claudeguards.Browser))
 
 	var cwd string
 	check := &cobra.Command{
@@ -126,6 +130,32 @@ func (rt *runtime) claudeGuardsCommand(use string) *cobra.Command {
 	}
 	teardown.Flags().BoolVar(&deadOnly, "dead-only", false, "sweep dead leaders only; never touch the caller's own swarm")
 	root.AddCommand(teardown)
+
+	var session string
+	browserTeardown := &cobra.Command{
+		Use:   "browser-teardown",
+		Short: "Stop this session's Onyx browser at session end (SessionEnd; stdin: hook JSON)",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			// --session is the hand-run form, typed at a terminal that never
+			// sends EOF, so the flag is consulted BEFORE stdin: reading first
+			// would make the documented invocation hang on a read nothing ever
+			// ends. Without it, a payload comes from the hook — and a malformed
+			// one fails open the same way the PreToolUse hooks do, but keeps
+			// going, because the environment still names the session whose
+			// browser must stop.
+			in := &claudeguards.HookInput{}
+			if s := strings.TrimSpace(session); s != "" {
+				in.SessionID = s
+			} else if payload, err := claudeguards.ReadInput(rt.stdin); err == nil {
+				in = payload
+			}
+			claudeguards.BrowserTeardown(in, rt.stderr)
+			return nil
+		},
+	}
+	browserTeardown.Flags().StringVar(&session, "session", "", "session id to stop (default: the hook payload's, else CLAUDE_CODE_SESSION_ID)")
+	root.AddCommand(browserTeardown)
 
 	root.AddCommand(&cobra.Command{
 		Use:    "refresh-visibility <repo-dir> <cache-file>",

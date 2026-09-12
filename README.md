@@ -14,6 +14,7 @@ every item installs independently.
 | `lok` | applet | Locale catalogs for AI sessions — configured in `vybava.config.ts`, queried by key, written by verb with every locale kept in sync, extracted from source, gated in CI. → [docs/lok.md](docs/lok.md) |
 | `vybava config` | verb | The shared per-repo `vybava.config.ts` every applet reads — `init` scaffolds it with typed helpers, `check` gates CI, `show` prints the evaluated JSON. → [docs/config.md](docs/config.md) |
 | `shrt` | applet | Terminal-safe short links on luko.to — offline repo rules, team-shared dynamic rules, minted codes; also the redirector server. → [docs/shrt.md](docs/shrt.md) |
+| `posta` | applet | Drive a shared test mailbox end to end — mint a per-run plus-address, wait for the mail a journey triggered, take its links and attachments. → [docs/posta.md](docs/posta.md) |
 | `fontfreeze` | applet | Freeze variable webfonts at rendered axis positions and subset per language. |
 | `perfrig` | applet | Performance drills from a `testing/<project>/perf` manifest — ramp to first failure, percentile report. |
 | `ingressgen` | applet | Render and drift-check complete default-deny Docker ingress policies from a manifest. |
@@ -21,6 +22,7 @@ every item installs independently.
 | `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
 | `codexsync` | applet | Render `~/.claude` skills and commands into `~/.agents/skills`, the structure Codex discovers — nesting preserved, each command a `source-command` skill, duplicate discovery suppressed. → [docs/codexsync.md](docs/codexsync.md) |
 | `codexusage` | applet | Explain where the Codex plan limit went — per-thread spend from `~/.codex` rollouts, the derived allowance, and the runway left at the measured burn rate. → [docs/codexusage.md](docs/codexusage.md) |
+| `repolicy` | applet | Hold GitHub repository settings to a declared policy across whole owners — GitHub inherits no organization default, so `audit` reports the drift (exit 1) and `apply` converges it, touching only the settings the policy names. → [docs/repolicy.md](docs/repolicy.md) |
 | `press` | applet | Deterministic state for the document family — project resolution, `~/Exports/<project>/` config and index, ARES lookups, shared doctrine. → [docs/press.md](docs/press.md) |
 | `press-pdf` / `press-logo` / `press-offer` / `press-email` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX; Outlook-paste client emails. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
 
