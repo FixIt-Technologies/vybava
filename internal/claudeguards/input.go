@@ -11,15 +11,46 @@ import (
 // carries the tool fields, the session-lifecycle hooks carry session_id.
 // Unknown fields are ignored by encoding/json, so schema growth is safe.
 type HookInput struct {
-	CWD       string `json:"cwd"`
-	SessionID string `json:"session_id"`
-	ToolName  string `json:"tool_name"`
-	ToolInput struct {
+	CWD            string `json:"cwd"`
+	SessionID      string `json:"session_id"`
+	TranscriptPath string `json:"transcript_path"`
+	ToolName       string `json:"tool_name"`
+	ToolInput      struct {
 		Command  string `json:"command"`
 		FilePath string `json:"file_path"`
 		Offset   int    `json:"offset"`
 		Limit    int    `json:"limit"`
 	} `json:"tool_input"`
+
+	guardsCfg  *Config // memoized by guards(); never set from JSON
+	budgetVal  Budget  // memoized by budget()
+	budgetErr  error
+	budgetRead bool
+}
+
+// budget returns this payload's context budget, reading the transcript at most
+// once. guardBudget consults it, and on every allowed call BudgetContext then
+// consults it again — at up to 4 MiB of JSON per read, that doubled the hook's
+// I/O for an answer that cannot have changed in between.
+func (in *HookInput) budget() (Budget, error) {
+	if !in.budgetRead {
+		in.budgetVal, in.budgetErr = ReadBudget(in.TranscriptPath)
+		in.budgetRead = true
+	}
+	return in.budgetVal, in.budgetErr
+}
+
+// guards returns the repo's guards config, loading it at most once per hook
+// payload. One Bash call runs several rules and many segments, and each used to
+// re-run vconfig.Load with its own `git rev-parse`. Memoizing on the PAYLOAD
+// rather than in a package variable keeps the rules free of process-global
+// state, which was eve's standing ruling on #53.
+func (in *HookInput) guards() Config {
+	if in.guardsCfg == nil {
+		cfg := guardConfig(in.CWD)
+		in.guardsCfg = &cfg
+	}
+	return *in.guardsCfg
 }
 
 // ReadInput parses the hook payload; any error means fail-open.

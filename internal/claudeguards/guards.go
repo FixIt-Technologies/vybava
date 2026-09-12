@@ -46,6 +46,7 @@ func Bash(in *HookInput) *Denial {
 		guardDestructive,
 		guardEnvDump,
 		guardHostInput,
+		guardBudget,
 		guardContextBash,
 		guardE2EScreenshot,
 		guardCommitSecrets,
@@ -59,7 +60,7 @@ func Bash(in *HookInput) *Denial {
 
 // Read evaluates every PreToolUse:Read rule.
 func Read(in *HookInput) *Denial {
-	for _, g := range []func(*HookInput) *Denial{guardE2ERead, guardContextRead} {
+	for _, g := range []func(*HookInput) *Denial{guardE2ERead, guardBudget, guardContextRead} {
 		if d := g(in); d != nil {
 			return d
 		}

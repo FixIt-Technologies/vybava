@@ -43,3 +43,49 @@ keyed by the file's size and mtime, so hooks and repeated calls pay bun's
 is a diagnostic, never a silently ignored setting. Adding a section for a
 new applet means a Go struct in that applet's package, its TypeScript twin
 in `internal/vconfig/config-helpers.ts`, and nothing else.
+
+## Guard settings and discovery
+
+```ts
+guards: {
+  noRead: ['apps/api/openapi.json', 'packages/api-client/generated/**',
+    '**/translation-keys.d.ts', 'bun.lock'],
+  maxDumpLines: 200,
+  // Omit for built-ins; [] disables only the unbounded-output gate.
+  unboundedCommands: ['docker logs', 'gh run view', 'git log', 'git diff',
+    'git show', 'bun test', 'go test', 'bunx jest'],
+}
+```
+
+Globs are repository-relative: `**` spans zero or more directories; ordinary
+components support `*`, `?`, and character classes. Config is loaded for each
+guard invocation; failed loads are reported and never cached by guard rules.
+
+```text
+vybava config discover           # review a TypeScript snippet
+vybava config discover --json    # candidates, reasons, inferred catalogs
+vybava config discover --write   # fill absent top-level guards/lok sections
+vybava config check --json       # helper drift fails; discovery drift warns
+```
+
+Discovery examines tracked regular files, skipping symlinks. Signals include
+size above 256 KiB, more than 2000 lines, generated paths/headers,
+`linguist-generated`, and formatter exclusions. Candidates are evidence for
+review; no-read suggestions favor explicit generated paths and attributes,
+coalescing generated directories into globs. JSONC formatter exclusions that
+cannot be parsed produce a warning.
+
+Sibling JSON catalogs varying by a locale filename/directory become one
+`{locale}` pattern. An English catalog with over 90% key/value equality suggests
+`english-as-key`; otherwise the suggestion is `path`. Plural suffixes are
+detected, and the largest catalog suggests a required locale **as a guess**.
+Review these policies before writing. A lone catalog cannot establish a locale
+family. Existing catalogs and human splits are preserved.
+
+`--write` never changes an existing section. For TypeScript it preserves the
+existing default expression in a binding and adds a default export with only
+missing sections; unsupported export shapes are refused. For JSON it inserts
+only missing properties. It requires an initialized configuration.
+
+Discovery lives in `internal/configdiscover`, composing Lok's ordered parser
+with `vconfig`; putting it in the loader itself would create an import cycle.

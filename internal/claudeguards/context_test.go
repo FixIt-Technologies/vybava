@@ -163,3 +163,66 @@ func TestLokCatalogRule(t *testing.T) {
 		t.Fatalf("escape hatch, got %v", d)
 	}
 }
+
+// Files past the 4 MiB read cap report a sentinel line count. A sentinel near
+// maxInt summed to a negative total once three of them appeared on one command
+// line, so the guard allowed exactly the dump it exists to stop.
+func TestDumpBudgetSumsUnmeasuredFilesWithoutWrapping(t *testing.T) {
+	root := t.TempDir()
+	var paths []string
+	for _, name := range []string{"a.log", "b.log", "c.log"} {
+		p := filepath.Join(root, name)
+		if err := os.WriteFile(p, []byte(strings.Repeat("x\n", 2<<20)), 0600); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, p)
+	}
+	d := contextBashMatch("cat "+strings.Join(paths, " "), root)
+	if d == nil || d.Rule != "context:whole-file-dump" {
+		t.Fatalf("three unmeasured files must stay denied, got %v", d)
+	}
+	if strings.Contains(d.Message, "4611686018427387903") {
+		t.Fatalf("sentinel leaked into the message: %s", d.Message)
+	}
+}
+
+// A pipe is only an exemption when the downstream command shrinks its input.
+func TestPipeExemptionNeedsAReducingSink(t *testing.T) {
+	root := t.TempDir()
+	big := filepath.Join(root, "big.txt")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x\n", 500)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if d := contextBashMatch("cat "+big+" | jq .", root); d != nil {
+		t.Fatalf("a reducing sink stays allowed, got %v", d)
+	}
+	if d := contextBashMatch("cat "+big+" | cat", root); d == nil || d.Rule != "context:whole-file-dump" {
+		t.Fatalf("| cat reproduces the file whole and must be denied, got %v", d)
+	}
+	// None of these bound anything — `sort` and `sed -n p` reproduce every
+	// input line, and an interpreter can do whatever it likes.
+	for _, sink := range []string{"sort", "uniq", "awk '{print}'", "sed -n p", "tee /tmp/x", "python3 -", "xargs -I{} echo {}"} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d == nil {
+			t.Fatalf("| %s does not bound its input and must not exempt the read", sink)
+		}
+	}
+	for _, sink := range []string{"head -20", "tail -5", "wc -l", "grep needle", "jq ."} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d != nil {
+			t.Fatalf("| %s bounds or queries and must stay allowed, got %v", sink, d)
+		}
+	}
+	// head and tail are sinks only when their own limit says so.
+	for _, sink := range []string{
+		"head -1000", "head -n 1000000", "tail -n +1", "tail -n 5000",
+		"head -c 100000000", "head -c100M", "tail -c +1", // a byte cap is only a cap if it is small
+	} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d == nil {
+			t.Fatalf("| %s delivers more than the budget and must not exempt the read", sink)
+		}
+	}
+	for _, sink := range []string{"head -c 2000", "head -c4k"} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d != nil {
+			t.Fatalf("| %s is a genuine cap and must stay allowed, got %v", sink, d)
+		}
+	}
+}

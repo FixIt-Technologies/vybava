@@ -2,9 +2,11 @@ package cli
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 
+	"github.com/henderson-tech/vybava/internal/configdiscover"
 	"github.com/henderson-tech/vybava/internal/runx"
 	"github.com/henderson-tech/vybava/internal/vconfig"
 	"github.com/spf13/cobra"
@@ -84,6 +86,52 @@ func (rt *runtime) configCommand() *cobra.Command {
 	}
 	initCmd.Flags().BoolVar(&force, "force", false, "rewrite the generated .vybava/config.ts helpers (never the config itself)")
 	root.AddCommand(initCmd)
+	var write bool
+	discoverCmd := &cobra.Command{
+		Use: "discover", Short: "Suggest guards and locale catalogs from tracked files", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			s := session(cmd)
+			root := workingDir()
+			cfg, loadErr := vconfig.Load(root)
+			if loadErr == nil {
+				root = cfg.Root
+			} else if !errors.Is(loadErr, vconfig.ErrNotFound) {
+				return finish(s, nil, nil, configDiagInvalid, loadErr.Error(), "")
+			}
+			r, err := configdiscover.Discover(root)
+			if err != nil {
+				return finish(s, nil, nil, runx.DiagInfraError, err.Error(), "")
+			}
+			written := []string{}
+			if write {
+				if loadErr != nil {
+					return finish(s, nil, nil, configDiagMissing, loadErr.Error(), "vybava config init")
+				}
+				written, err = r.WriteAbsent(cfg)
+				if err != nil {
+					return finish(s, nil, nil, configDiagInvalid, err.Error(), "")
+				}
+			}
+			if !rt.json {
+				if _, err := fmt.Fprint(rt.stdout, r.Snippet()); err != nil {
+					return err
+				}
+				for _, warning := range r.Warnings {
+					fmt.Fprintln(rt.stderr, warning)
+				}
+				if write {
+					fmt.Fprintln(rt.stderr, "Added sections:", written)
+				}
+				return nil
+			}
+			return finish(s, struct {
+				Discovery configdiscover.Result `json:"discovery"`
+				Written   []string              `json:"written"`
+			}{r, written}, nil, "", "", "")
+		},
+	}
+	discoverCmd.Flags().BoolVar(&write, "write", false, "fill only absent top-level config sections")
+	root.AddCommand(discoverCmd)
 
 	root.AddCommand(&cobra.Command{
 		Use: "check", Short: "Evaluate the config and verify the helpers match this binary — CI gate", Args: cobra.NoArgs,
@@ -106,7 +154,19 @@ func (rt *runtime) configCommand() *cobra.Command {
 					return finish(s, data, nil, configDiagHelperDrift, err.Error(), "vybava config init --force")
 				}
 			}
-			return finish(s, data, nil, "", "", "")
+			r, err := configdiscover.Discover(cfg.Root)
+			if err != nil {
+				return finish(s, data, nil, runx.DiagInfraError, err.Error(), "")
+			}
+			warnings, err := r.Drift(cfg)
+			if err != nil {
+				return finish(s, data, nil, configDiagInvalid, err.Error(), "")
+			}
+			diagnostics := []runx.Diagnostic{}
+			for _, warning := range warnings {
+				diagnostics = append(diagnostics, runx.Diagnostic{Code: "DISCOVERY_DRIFT", Severity: "warning", Detail: warning, Fix: "vybava config discover"})
+			}
+			return s.Emit(runx.Envelope{OK: true, Verb: s.Verb, Data: data, Diagnostics: diagnostics, Next: []string{}})
 		},
 	})
 
