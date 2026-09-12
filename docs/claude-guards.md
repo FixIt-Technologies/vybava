@@ -12,10 +12,12 @@ Wire it once in `~/.claude/settings.json` (the applet symlink lives at
 symlink keeps working):
 
 ```text
-PreToolUse  Bash   claude-guards bash
-PreToolUse  Read   claude-guards read
-SessionStart       claude-guards swarm-teardown --dead-only
-SessionEnd         claude-guards swarm-teardown
+PreToolUse    Bash    claude-guards bash
+PreToolUse    Read    claude-guards read
+PreToolUse    mcp__playwright__.*|mcp__plugin_chrome-devtools-mcp_chrome-devtools__.*    claude-guards browser
+SessionStart          claude-guards swarm-teardown --dead-only
+SessionEnd            claude-guards swarm-teardown
+SessionEnd            claude-guards browser-teardown
 ```
 
 A block prints its reason and the sanctioned alternative on stderr and exits 2;
@@ -47,10 +49,47 @@ Edit calls. The rules make Edit and ranged reads the only cheap path. Piped or
 redirected reads never reach the context and are never blocked; `/tmp`,
 `/var/folders` and `$TMPDIR` targets are exempt from the write rules.
 
+`swarm-teardown` and `browser-teardown` are the lifecycle verbs. They block
+nothing and decide nothing: they clean up what the ending session owns, log a
+line to stderr, and always exit 0.
+
+`browser-teardown` asks the resident onyx-mcp daemon whether the ending session
+has a browser and, if it does, sends exactly one `browser_stop` for that
+session's own id (the SessionEnd payload's `session_id`, else
+`CLAUDE_CODE_SESSION_ID`). It asks first because `browser_stop` answers
+`{"stopped":true}` for a session that never had a browser, and a hook that
+reports a stop it did not perform is one nobody can read. Since Onyx went
+HTTP-only one daemon owns every session's Helium, and it reaps a browser when
+the browser's owning process dies — which is now the daemon itself, which never
+dies. The idle watchdog is no backstop either: agents are routinely told to pass
+`idle_timeout_seconds: 0`, which disables it. So browsers accumulate at ~0.5 GB
+apiece — 23 of them on one Mac on 2026-09-12, the oldest 21 hours old. The
+daemon cannot fix this from inside, because a session that will never call again
+looks exactly like a session thinking; session end is knowledge only the ending
+session has, and this hook is how it hands it over.
+
+Two properties, both incident-born. It stops its OWN browser and nothing else —
+no sweep, no pkill, never a peer's id, because an earlier cleanup that reached
+wider killed every peer's browser and wiped their logged-in profiles. And it
+fails open on everything: no token file, no daemon, refused connection, non-200,
+JSON-RPC error, and the tool-level failure the daemon reports as `isError`
+inside an HTTP 200. A hook that errors or hangs here would degrade every session
+end on the machine, so the only failure it even prints is one the daemon itself
+reported.
+
 Try a rule without a hook payload:
 
 ```text
 claude-guards check bash "git stash" --json
 claude-guards check bash "cat apps/client/locales/cs.json" --cwd ~/Work/Projects/FixIt --json
 claude-guards check read apps/client/locales/cs.json --json
+```
+
+`browser-teardown` has no `check` form, because it decides nothing — run it by
+hand and it really does stop that session's browser. Always with `--session`:
+without it the command waits for a hook payload on stdin, and a terminal never
+ends one.
+
+```text
+claude-guards browser-teardown --session "$CLAUDE_CODE_SESSION_ID"
 ```
