@@ -224,16 +224,55 @@ var reducingSinks = map[string]bool{
 	"wc": true, "count": true, // counters emit a number
 }
 
-// reducesOutput reports whether a pipe's downstream segment bounds its input.
-func reducesOutput(seg string) bool {
+// reducesOutput reports whether a pipe's downstream segment bounds its input
+// to within budget. head and tail are sinks only when their own limit says so:
+// `head -1000` and `tail -n +1` are reducing in name alone.
+func reducesOutput(seg string, budget int) bool {
 	f := shellFields(strings.TrimLeft(seg, "( \t"))
 	for len(f) > 0 && strings.Contains(f[0], "=") {
 		f = f[1:]
 	}
-	return len(f) > 0 && reducingSinks[filepath.Base(f[0])]
+	if len(f) == 0 {
+		return false
+	}
+	name := filepath.Base(f[0])
+	if !reducingSinks[name] {
+		return false
+	}
+	if name == "head" || name == "tail" {
+		return headTailBounded(f[1:], budget)
+	}
+	return true
 }
 
-func dumpSegments(cmd string) []dumpSegment {
+// headTailBounded reads a head/tail line limit the way the tools do.
+func headTailBounded(args []string, budget int) bool {
+	n := 10 // the default for both
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case strings.HasPrefix(a, "-c"):
+			return true // an explicit byte cap is a cap
+		case a == "-n" && i+1 < len(args):
+			i++
+			if strings.HasPrefix(args[i], "+") {
+				return false // `tail -n +K` runs to EOF
+			}
+			n = atoiOr(strings.TrimPrefix(args[i], "-"), budget+1)
+		case strings.HasPrefix(a, "-n"):
+			v := strings.TrimPrefix(a, "-n")
+			if strings.HasPrefix(v, "+") {
+				return false
+			}
+			n = atoiOr(strings.TrimPrefix(v, "-"), budget+1)
+		case len(a) > 1 && a[0] == '-' && isDigits(a[1:]):
+			n = atoiOr(a[1:], budget+1)
+		}
+	}
+	return n <= budget
+}
+
+func dumpSegments(cmd string, budget int) []dumpSegment {
 	src := stripQuotedHeredocs(cmd)
 	var texts []string
 	var piped []bool
@@ -256,7 +295,7 @@ func dumpSegments(cmd string) []dumpSegment {
 			// Find the sink: the next segment with any content.
 			for j := i + 1; j < len(texts); j++ {
 				if next := strings.Trim(texts[j], " \t\r"); next != "" {
-					consumed = consumed || reducesOutput(next)
+					consumed = consumed || reducesOutput(next, budget)
 					break
 				}
 			}
@@ -420,18 +459,23 @@ func isDigits(s string) bool {
 }
 
 // contextBashMatch is the pure decision for the Bash rules — unit-testable.
+// contextBashMatch loads the config itself; hook paths call the Cfg form with
+// the payload-memoized one so a single Bash call loads it once, not per rule.
 func contextBashMatch(cmd, cwd string) *Denial {
+	return contextBashMatchCfg(cmd, cwd, guardConfig(cwd))
+}
+
+func contextBashMatchCfg(cmd, cwd string, cfg Config) *Denial {
 	if cmd == "" {
 		return nil
 	}
 	allowWrite := escapeHatch(cmd, "CLAUDE_ALLOW_SHELL_EDIT")
 	allowRead := escapeHatch(cmd, "CLAUDE_ALLOW_CONTEXT_DUMP")
-	cfg := guardConfig(cwd)
 
 	if !allowWrite && reInlineScript.MatchString(cmd) && reScriptWrites.MatchString(cmd) {
 		return deny("context:inline-script-write", inlineScriptMsg, contextWriteEscape)
 	}
-	for _, seg := range dumpSegments(cmd) {
+	for _, seg := range dumpSegments(cmd, cfg.MaxDumpLines) {
 		if !allowWrite {
 			if target := overwriteTarget(seg.text); target != "" {
 				abs := resolvePath(target, cwd)
@@ -476,11 +520,14 @@ func overwriteTarget(seg string) string {
 
 // contextReadMatch is the pure decision for the Read-tool rules.
 func contextReadMatch(path string, limit int, cwd string) *Denial {
+	return contextReadMatchCfg(path, limit, cwd, guardConfig(cwd))
+}
+
+func contextReadMatchCfg(path string, limit int, cwd string, cfg Config) *Denial {
 	if path == "" {
 		return nil
 	}
 	abs := resolvePath(path, cwd)
-	cfg := guardConfig(cwd)
 	if cfg.noRead(abs) {
 		return noReadDenial(abs)
 	}
@@ -500,12 +547,14 @@ func contextReadMatch(path string, limit int, cwd string) *Denial {
 	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, linesLabel(n), cfg.MaxDumpLines), "")
 }
 
-func guardContextBash(in *HookInput) *Denial { return contextBashMatch(in.ToolInput.Command, in.CWD) }
+func guardContextBash(in *HookInput) *Denial {
+	return contextBashMatchCfg(in.ToolInput.Command, in.CWD, in.guards())
+}
 func guardContextRead(in *HookInput) *Denial {
 	if os.Getenv("CLAUDE_ALLOW_CONTEXT_DUMP") == "1" {
 		return nil
 	}
-	return contextReadMatch(in.ToolInput.FilePath, in.ToolInput.Limit, in.CWD)
+	return contextReadMatchCfg(in.ToolInput.FilePath, in.ToolInput.Limit, in.CWD, in.guards())
 }
 
 const inlineScriptMsg = `An inline script (python/node heredoc, -c, -e) that writes files is the most

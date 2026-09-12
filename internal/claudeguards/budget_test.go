@@ -97,6 +97,16 @@ func TestBudgetReadCountsRemainingAfterOffset(t *testing.T) {
 	if d := at(0, 0); d == nil {
 		t.Fatal("the whole 300-line file must still be denied at 80%")
 	}
+	// Offsets are one-based: offset 1 is the whole file, not one line short.
+	if d := at(1, 0); d == nil {
+		t.Fatal("offset 1 returns every line and must be denied")
+	}
+	if d := at(201, 0); d != nil {
+		t.Fatalf("lines 201-300 is exactly 100 — must be allowed, got %v", d)
+	}
+	if d := at(200, 0); d == nil {
+		t.Fatal("lines 200-300 is 101 lines and must be denied")
+	}
 	if d := at(0, 150); d == nil {
 		t.Fatal("a 150-line limit must still be denied at 80%")
 	}

@@ -211,4 +211,10 @@ func TestPipeExemptionNeedsAReducingSink(t *testing.T) {
 			t.Fatalf("| %s bounds or queries and must stay allowed, got %v", sink, d)
 		}
 	}
+	// head and tail are sinks only when their own limit says so.
+	for _, sink := range []string{"head -1000", "head -n 1000000", "tail -n +1", "tail -n 5000"} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d == nil {
+			t.Fatalf("| %s delivers more than the budget and must not exempt the read", sink)
+		}
+	}
 }

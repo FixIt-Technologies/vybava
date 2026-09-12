@@ -20,6 +20,21 @@ type HookInput struct {
 		Offset   int    `json:"offset"`
 		Limit    int    `json:"limit"`
 	} `json:"tool_input"`
+
+	guardsCfg *Config // memoized by guards(); never set from JSON
+}
+
+// guards returns the repo's guards config, loading it at most once per hook
+// payload. One Bash call runs several rules and many segments, and each used to
+// re-run vconfig.Load with its own `git rev-parse`. Memoizing on the PAYLOAD
+// rather than in a package variable keeps the rules free of process-global
+// state, which was eve's standing ruling on #53.
+func (in *HookInput) guards() Config {
+	if in.guardsCfg == nil {
+		cfg := guardConfig(in.CWD)
+		in.guardsCfg = &cfg
+	}
+	return *in.guardsCfg
 }
 
 // ReadInput parses the hook payload; any error means fail-open.
