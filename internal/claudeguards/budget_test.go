@@ -110,6 +110,28 @@ func TestBudgetReadCountsRemainingAfterOffset(t *testing.T) {
 	if d := at(0, 150); d == nil {
 		t.Fatal("a 150-line limit must still be denied at 80%")
 	}
+	// The ordinary 200-line rule must agree with the tier above it, or a read
+	// the tier just allowed is denied one guard later for the same reason.
+	in := &HookInput{CWD: root, TranscriptPath: transcript, SessionID: "s"}
+	in.ToolInput.FilePath, in.ToolInput.Offset = file, 250
+	if d := guardContextRead(in); d != nil {
+		t.Fatalf("51 lines remain after the offset — the dump rule must allow it too, got %v", d)
+	}
+	in.ToolInput.Offset = 0
+	if d := guardContextRead(in); d == nil {
+		t.Fatal("the whole 300-line file must still exceed the 200-line budget")
+	}
+	// One payload, one transcript read: both guards consult the same budget.
+	probe := &HookInput{CWD: root, TranscriptPath: transcript, SessionID: "s"}
+	if _, err := probe.budget(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(transcript); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := probe.budget(); err != nil || b.Tokens == 0 {
+		t.Fatalf("budget must be memoized on the payload, got %+v %v", b, err)
+	}
 }
 
 // Fail-open diagnostics belong on stderr. Returned here they become

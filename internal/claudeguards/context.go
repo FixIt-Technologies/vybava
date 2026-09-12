@@ -550,10 +550,10 @@ func overwriteTarget(seg string) string {
 
 // contextReadMatch is the pure decision for the Read-tool rules.
 func contextReadMatch(path string, limit int, cwd string) *Denial {
-	return contextReadMatchCfg(path, limit, cwd, guardConfig(cwd))
+	return contextReadMatchCfg(path, 0, limit, cwd, guardConfig(cwd))
 }
 
-func contextReadMatchCfg(path string, limit int, cwd string, cfg Config) *Denial {
+func contextReadMatchCfg(path string, offset, limit int, cwd string, cfg Config) *Denial {
 	if path == "" {
 		return nil
 	}
@@ -571,10 +571,17 @@ func contextReadMatchCfg(path string, limit int, cwd string, cfg Config) *Denial
 		return nil
 	}
 	n, ok := lineCount(abs)
-	if !ok || n <= cfg.MaxDumpLines {
+	// Offsets are one-based, and what a Read delivers is what is left after
+	// one. Judging by the whole file denied a read of the last 50 lines that
+	// the 70% tier — which does count the offset — had just allowed.
+	remaining := n
+	if offset > 1 {
+		remaining = max(0, n-offset+1)
+	}
+	if !ok || remaining <= cfg.MaxDumpLines {
 		return nil
 	}
-	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, linesLabel(n), cfg.MaxDumpLines), "")
+	return deny("context:whole-file-dump", fmt.Sprintf(readToolMsg, abs, linesLabel(remaining), cfg.MaxDumpLines), "")
 }
 
 func guardContextBash(in *HookInput) *Denial {
@@ -584,7 +591,7 @@ func guardContextRead(in *HookInput) *Denial {
 	if os.Getenv("CLAUDE_ALLOW_CONTEXT_DUMP") == "1" {
 		return nil
 	}
-	return contextReadMatchCfg(in.ToolInput.FilePath, in.ToolInput.Limit, in.CWD, in.guards())
+	return contextReadMatchCfg(in.ToolInput.FilePath, in.ToolInput.Offset, in.ToolInput.Limit, in.CWD, in.guards())
 }
 
 const inlineScriptMsg = `An inline script (python/node heredoc, -c, -e) that writes files is the most

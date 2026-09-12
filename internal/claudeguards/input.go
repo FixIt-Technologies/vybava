@@ -22,7 +22,22 @@ type HookInput struct {
 		Limit    int    `json:"limit"`
 	} `json:"tool_input"`
 
-	guardsCfg *Config // memoized by guards(); never set from JSON
+	guardsCfg  *Config // memoized by guards(); never set from JSON
+	budgetVal  Budget  // memoized by budget()
+	budgetErr  error
+	budgetRead bool
+}
+
+// budget returns this payload's context budget, reading the transcript at most
+// once. guardBudget consults it, and on every allowed call BudgetContext then
+// consults it again — at up to 4 MiB of JSON per read, that doubled the hook's
+// I/O for an answer that cannot have changed in between.
+func (in *HookInput) budget() (Budget, error) {
+	if !in.budgetRead {
+		in.budgetVal, in.budgetErr = ReadBudget(in.TranscriptPath)
+		in.budgetRead = true
+	}
+	return in.budgetVal, in.budgetErr
 }
 
 // guards returns the repo's guards config, loading it at most once per hook

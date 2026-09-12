@@ -115,7 +115,7 @@ func BudgetContext(in *HookInput) string {
 		budgetDiag("context budget unavailable (missing transcript_path); budget rules fail open")
 		return ""
 	}
-	b, err := ReadBudget(in.TranscriptPath)
+	b, err := in.budget()
 	if err != nil {
 		budgetDiag("context budget unavailable; budget rules fail open: " + err.Error())
 		return ""
@@ -149,7 +149,7 @@ func guardBudget(in *HookInput) *Denial {
 	if os.Getenv("CLAUDE_ALLOW_CONTEXT_DUMP") == "1" || escapeHatch(in.ToolInput.Command, "CLAUDE_ALLOW_CONTEXT_DUMP") {
 		return nil
 	}
-	b, err := ReadBudget(in.TranscriptPath)
+	b, err := in.budget()
 	if err != nil || b.Percent() < 70 {
 		return nil
 	}

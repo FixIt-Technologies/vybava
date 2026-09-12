@@ -52,6 +52,10 @@ func TestGuardConfigPerCall(t *testing.T) {
 func TestUnboundedOutput(t *testing.T) {
 	for _, tc := range []struct{ deny, allow string }{
 		{"docker logs app", "docker logs --tail 200 app"},
+		// docker spells its uncapped default as a value, not an absent flag.
+		{"docker logs --tail all app", "docker logs --tail 200 app"},
+		{"docker logs --tail=all app", "docker logs --tail=200 app"},
+		{"docker logs -n all app", "docker logs -n 200 app"},
 		{"gh run view 12 --log", "gh run view 12 --log | tail -100"},
 		{"gh run view 12 --log-failed", "gh run view 12"},
 		{"git log --oneline", "git log --oneline -20"},

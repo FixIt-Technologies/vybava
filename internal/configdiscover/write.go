@@ -80,7 +80,15 @@ func (r Result) WriteAbsent(cfg *vconfig.Config) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.CreateTemp(cfg.Root, ".vybava-discover-*")
+	// Resolve the destination BEFORE choosing where to stage: the replacement
+	// has to be created on the same filesystem it will be renamed onto, or a
+	// config symlinked to another volume (a common dotfile arrangement) fails
+	// the rename with EXDEV.
+	dest := cfg.Path
+	if resolved, err := filepath.EvalSymlinks(dest); err == nil {
+		dest = resolved
+	}
+	f, err := os.CreateTemp(filepath.Dir(dest), ".vybava-discover-*")
 	if err != nil {
 		return nil, err
 	}
@@ -96,14 +104,8 @@ func (r Result) WriteAbsent(cfg *vconfig.Config) ([]string, error) {
 	if err = f.Close(); err != nil {
 		return nil, err
 	}
-	// Write THROUGH a symlink, never over it: vconfig.Find stats rather than
-	// lstats, so a config symlinked into the repo resolves fine on read, and a
-	// plain rename would silently replace the link with a regular file and
-	// strand whatever it pointed at.
-	dest := cfg.Path
-	if resolved, err := filepath.EvalSymlinks(dest); err == nil {
-		dest = resolved
-	}
+	// Write THROUGH the symlink, never over it: a plain rename onto cfg.Path
+	// would replace the link with a regular file and strand its target.
 	if err = os.Rename(f.Name(), dest); err != nil {
 		return nil, err
 	}

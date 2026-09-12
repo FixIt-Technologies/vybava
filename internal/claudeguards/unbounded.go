@@ -2,6 +2,22 @@ package claudeguards
 
 import "strings"
 
+// cappedValue reports whether one of these flags carries a real limit. A flag
+// whose value is `all` names the uncapped default, so it caps nothing.
+func cappedValue(f []string, flags ...string) bool {
+	for i := 2; i < len(f); i++ {
+		for _, flag := range flags {
+			if f[i] == flag && i+1 < len(f) {
+				return !strings.EqualFold(f[i+1], "all")
+			}
+			if strings.HasPrefix(f[i], flag+"=") {
+				return !strings.EqualFold(strings.TrimPrefix(f[i], flag+"="), "all")
+			}
+		}
+	}
+	return false
+}
+
 func unboundedOutput(segment string, cfg Config) *Denial {
 	f := shellFields(strings.TrimLeft(segment, "( \t"))
 	for len(f) > 0 && strings.Contains(f[0], "=") {
@@ -55,7 +71,9 @@ func unboundedOutput(segment string, cfg Config) *Denial {
 	fix := ""
 	switch command {
 	case "docker logs":
-		if !has("--tail", "--since", "-n") {
+		// docker spells its uncapped default `--tail all` / `-n all`, so the
+		// flag being present is not evidence of a cap.
+		if !has("--since") && !cappedValue(f, "--tail", "-n") {
 			fix = "docker logs --tail 200 <container>"
 		}
 	case "gh run view":
