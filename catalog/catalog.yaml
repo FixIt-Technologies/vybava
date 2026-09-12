@@ -1,6 +1,12 @@
 schema_version: 1
 
 items:
+  - id: worktime
+    kind: applet
+    status: experimental
+    description: Native metadata-only foreground application and idle sampling for opt-in automatic time capture.
+    applet: worktime
+
   - id: claude-guards
     kind: applet
     status: experimental
