@@ -154,3 +154,18 @@ func TestHittingTheLimitWarnsInsteadOfSilentlyTruncating(t *testing.T) {
 		t.Fatalf("warnings = %v, want one about the limit", report.Warnings)
 	}
 }
+
+func TestMistypedTopLevelKeyIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	// `excludes:` is not `exclude:` — loading this silently would leave the
+	// exclusion list empty and let apply write to the protected repositories.
+	body := "excludes:\n  - acme/keep-out\nsettings:\n  deleteBranchOnMerge: true\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadPolicy(path)
+	if err == nil || !strings.Contains(err.Error(), "excludes") {
+		t.Fatalf("err = %v, want the unknown field named", err)
+	}
+}

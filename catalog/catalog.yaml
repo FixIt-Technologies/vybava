@@ -234,6 +234,12 @@ groups:
       - claude-guards
       - envbridge
       - posta
+      - codexsync
+      - codexusage
+      - repolicy
+      - hotfix
+      - hotfix-lane
+      - operator
       - memorylint
       - fontfreeze
       - perfrig

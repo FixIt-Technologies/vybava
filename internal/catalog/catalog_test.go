@@ -70,3 +70,32 @@ func TestResolveRejectsUnknownSelector(t *testing.T) {
 		t.Fatal("Resolve() accepted an unknown selector")
 	}
 }
+
+func TestEverythingGroupCarriesEveryItem(t *testing.T) {
+	t.Parallel()
+
+	c, err := catalog.Load(assets.FS)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	everything, err := c.Resolve([]string{"everything"})
+	if err != nil {
+		t.Fatalf("Resolve(everything) error = %v", err)
+	}
+	installed := map[string]bool{}
+	for _, item := range everything {
+		installed[item.ID] = true
+	}
+	// "Every package currently published" is the group's contract, and the
+	// only thing that keeps a new package from shipping unreachable to anyone
+	// who asked for all of them.
+	var missing []string
+	for _, item := range c.Items {
+		if !installed[item.ID] {
+			missing = append(missing, item.ID)
+		}
+	}
+	if len(missing) > 0 {
+		t.Fatalf("everything omits %v — add each new package to the group", missing)
+	}
+}

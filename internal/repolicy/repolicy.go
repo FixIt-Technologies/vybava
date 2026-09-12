@@ -8,8 +8,11 @@
 package repolicy
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -60,13 +63,19 @@ func DefaultPolicy() Policy {
 }
 
 // LoadPolicy reads a YAML policy file and validates its vocabulary.
+//
+// Decoding is strict: a mistyped top-level key (`excludes:` for `exclude:`)
+// would otherwise load cleanly, leave the field empty, and let apply write to
+// the very repositories the operator wrote the file to protect.
 func LoadPolicy(path string) (Policy, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return Policy{}, fmt.Errorf("read policy: %w", err)
 	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
 	var p Policy
-	if err := yaml.Unmarshal(raw, &p); err != nil {
+	if err := decoder.Decode(&p); err != nil && !errors.Is(err, io.EOF) {
 		return Policy{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return p, p.Validate()
