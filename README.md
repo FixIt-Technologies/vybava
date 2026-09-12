@@ -22,6 +22,7 @@ every item installs independently.
 | `prm` / `prc` / `merge` | skills | PR create → review-resolve → gated merge workflows for Claude Code and Codex. |
 | `codexsync` | applet | Render `~/.claude` skills and commands into `~/.agents/skills`, the structure Codex discovers — nesting preserved, each command a `source-command` skill, duplicate discovery suppressed. → [docs/codexsync.md](docs/codexsync.md) |
 | `codexusage` | applet | Explain where the Codex plan limit went — per-thread spend from `~/.codex` rollouts, the derived allowance, and the runway left at the measured burn rate. → [docs/codexusage.md](docs/codexusage.md) |
+| `repolicy` | applet | Hold GitHub repository settings to a declared policy across whole owners — GitHub inherits no organization default, so `audit` reports the drift (exit 1) and `apply` converges it, touching only the settings the policy names. → [docs/repolicy.md](docs/repolicy.md) |
 | `press` | applet | Deterministic state for the document family — project resolution, `~/Exports/<project>/` config and index, ARES lookups, shared doctrine. → [docs/press.md](docs/press.md) |
 | `press-pdf` / `press-logo` / `press-offer` / `press-email` | skills | Offer, documentation and legal PDFs; brand marks; Czech commercial DOCX; Outlook-paste client emails. Issuer identity stays machine-local. → [docs/press.md](docs/press.md) |
 

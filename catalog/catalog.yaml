@@ -79,6 +79,12 @@ items:
     description: Explain where the Codex plan limit went — per-thread spend from ~/.codex rollouts, the derived allowance, and the runway left at the measured burn rate.
     applet: codexusage
 
+  - id: repolicy
+    kind: applet
+    status: experimental
+    description: Hold GitHub repository settings to a declared policy across whole owners — GitHub inherits no organization default, so audit reports the drift (exit 1) and apply converges it, touching only the settings the policy names.
+    applet: repolicy
+
   - id: reconcile
     kind: applet
     status: experimental
@@ -184,6 +190,7 @@ groups:
       - posta
       - codexsync
       - codexusage
+      - repolicy
       - hotfix
       - hotfix-lane
       - reclaim
@@ -227,6 +234,12 @@ groups:
       - claude-guards
       - envbridge
       - posta
+      - codexsync
+      - codexusage
+      - repolicy
+      - hotfix
+      - hotfix-lane
+      - operator
       - memorylint
       - fontfreeze
       - perfrig
