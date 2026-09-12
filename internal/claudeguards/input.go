@@ -7,10 +7,12 @@ import (
 	"strings"
 )
 
-// HookInput is the PreToolUse payload Claude Code pipes to hook commands.
+// HookInput is the payload Claude Code pipes to hook commands — PreToolUse
+// carries the tool fields, the session-lifecycle hooks carry session_id.
 // Unknown fields are ignored by encoding/json, so schema growth is safe.
 type HookInput struct {
 	CWD       string `json:"cwd"`
+	SessionID string `json:"session_id"`
 	ToolName  string `json:"tool_name"`
 	ToolInput struct {
 		Command  string `json:"command"`

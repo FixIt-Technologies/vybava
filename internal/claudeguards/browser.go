@@ -58,31 +58,51 @@ func onyxTokenFile() string {
 	return filepath.Join(home, "Library", "Application Support", "Onyx", "mcp-http-token")
 }
 
-func onyxBrowserLookupURL(session string) string {
+// onyxHTTPBase is the loopback origin of the resident onyx-mcp daemon. The port
+// is the one knob the installer moves, so tests point at an httptest server the
+// same way an operator points at a second port.
+func onyxHTTPBase() string {
 	port := strings.TrimSpace(os.Getenv("ONYX_MCP_HTTP_PORT"))
 	if port == "" {
 		port = defaultOnyxHTTPPort
 	}
-	return "http://127.0.0.1:" + port + "/browser?session=" + session
+	return "http://127.0.0.1:" + port
+}
+
+func onyxBrowserLookupURL(session string) string {
+	return onyxHTTPBase() + "/browser?session=" + session
+}
+
+// onyxBearerToken reads the daemon's loopback bearer token. ok=false means
+// "onyx is not installed or not reachable here" — every caller fails open on
+// it. The value goes into an Authorization header and nowhere else: never argv,
+// never a URL, never a log line.
+func onyxBearerToken() (string, bool) {
+	path := onyxTokenFile()
+	if path == "" {
+		return "", false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	token := strings.TrimSpace(string(raw))
+	return token, token != ""
 }
 
 // browserState asks onyx-mcp whether this session's browser is running.
 // Returns (running, known): known is false whenever the answer is not a clear
 // 200 or 404 — the caller fails open on !known.
 func browserState(session string) (running, known bool) {
-	tokenPath := onyxTokenFile()
-	if tokenPath == "" {
-		return false, false
-	}
-	token, err := os.ReadFile(tokenPath)
-	if err != nil {
+	token, ok := onyxBearerToken()
+	if !ok {
 		return false, false
 	}
 	req, err := http.NewRequest(http.MethodGet, onyxBrowserLookupURL(session), nil)
 	if err != nil {
 		return false, false
 	}
-	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+	req.Header.Set("Authorization", "Bearer "+token)
 	client := &http.Client{Timeout: browserLookupTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
