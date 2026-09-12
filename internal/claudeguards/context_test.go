@@ -212,9 +212,17 @@ func TestPipeExemptionNeedsAReducingSink(t *testing.T) {
 		}
 	}
 	// head and tail are sinks only when their own limit says so.
-	for _, sink := range []string{"head -1000", "head -n 1000000", "tail -n +1", "tail -n 5000"} {
+	for _, sink := range []string{
+		"head -1000", "head -n 1000000", "tail -n +1", "tail -n 5000",
+		"head -c 100000000", "head -c100M", "tail -c +1", // a byte cap is only a cap if it is small
+	} {
 		if d := contextBashMatch("cat "+big+" | "+sink, root); d == nil {
 			t.Fatalf("| %s delivers more than the budget and must not exempt the read", sink)
+		}
+	}
+	for _, sink := range []string{"head -c 2000", "head -c4k"} {
+		if d := contextBashMatch("cat "+big+" | "+sink, root); d != nil {
+			t.Fatalf("| %s is a genuine cap and must stay allowed, got %v", sink, d)
 		}
 	}
 }

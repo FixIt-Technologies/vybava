@@ -245,6 +245,31 @@ func reducesOutput(seg string, budget int) bool {
 	return true
 }
 
+// byteCapBounded reports whether an explicit `-c` cap keeps the output inside
+// the line budget. A byte cap is only a cap if the bytes it admits could not
+// carry more than budget lines — `head -c 100000000` is not a cap — and
+// `tail -c +K` counts from a byte offset and runs to EOF, so it is never one.
+// 200 bytes per line is a generous average for source and logs.
+func byteCapBounded(v string, budget int) bool {
+	if v == "" || strings.HasPrefix(v, "+") {
+		return false
+	}
+	mult := 1
+	if len(v) > 1 {
+		switch v[len(v)-1] {
+		case 'k', 'K':
+			mult, v = 1<<10, v[:len(v)-1]
+		case 'm', 'M':
+			mult, v = 1<<20, v[:len(v)-1]
+		case 'g', 'G':
+			mult, v = 1<<30, v[:len(v)-1]
+		}
+	}
+	n := atoiOr(strings.TrimPrefix(v, "-"), 0)
+	limit := budget * 200
+	return n > 0 && mult <= limit && n <= limit/mult
+}
+
 // headTailBounded reads a head/tail line limit the way the tools do.
 func headTailBounded(args []string, budget int) bool {
 	n := 10 // the default for both
@@ -252,7 +277,12 @@ func headTailBounded(args []string, budget int) bool {
 		a := args[i]
 		switch {
 		case strings.HasPrefix(a, "-c"):
-			return true // an explicit byte cap is a cap
+			v := strings.TrimPrefix(a, "-c")
+			if v == "" && i+1 < len(args) {
+				i++
+				v = args[i]
+			}
+			return byteCapBounded(v, budget)
 		case a == "-n" && i+1 < len(args):
 			i++
 			if strings.HasPrefix(args[i], "+") {
