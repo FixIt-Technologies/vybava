@@ -97,6 +97,9 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 	if filepath.Base(invokedAs) == "codexusage" {
 		return rt.codexusageApplet(), nil
 	}
+	if filepath.Base(invokedAs) == "worktime" {
+		return rt.worktimeApplet(), nil
+	}
 	if filepath.Base(invokedAs) == "reconcile" {
 		return rt.reconcileApplet(), nil
 	}
@@ -153,6 +156,7 @@ func (a App) Command(invokedAs string) (*cobra.Command, error) {
 		rt.hotfixCommand("hotfix"),
 		rt.codexsyncCommand("codexsync"),
 		rt.codexusageCommand("codexusage"),
+		rt.worktimeCommand("worktime"),
 		rt.reconcileCommand("reconcile"),
 		rt.reclaimCommand("reclaim"),
 		rt.handoffsCommand("handoffs"),

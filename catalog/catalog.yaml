@@ -1,6 +1,12 @@
 schema_version: 1
 
 items:
+  - id: worktime
+    kind: applet
+    status: experimental
+    description: Native metadata-only foreground application and idle sampling for opt-in automatic time capture.
+    applet: worktime
+
   - id: claude-guards
     kind: applet
     status: experimental
@@ -184,6 +190,7 @@ groups:
   - id: experimental
     description: Early packages that are useful but still evolving.
     items:
+      - worktime
       - lok
       - claude-guards
       - envbridge
@@ -230,6 +237,7 @@ groups:
   - id: everything
     description: Every package currently published by Výbava.
     items:
+      - worktime
       - lok
       - claude-guards
       - envbridge
